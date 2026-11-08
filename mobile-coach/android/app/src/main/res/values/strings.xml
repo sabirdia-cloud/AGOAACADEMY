@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">أكاديمية أجيال وادي العثمانية</string>
+    <string name="title_activity_main">أكاديمية أجيال وادي العثمانية</string>
+    <string name="package_name">com.agoa.coach</string>
+    <string name="custom_url_scheme">com.agoa.coach</string>
+</resources>

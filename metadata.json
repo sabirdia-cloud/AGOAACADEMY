@@ -1,0 +1,5 @@
+{
+  "name": "Football Academy Management System",
+  "description": "A professional web application for managing football academies, including players, teams, training sessions, matches, performance, and subscriptions.",
+  "requestFramePermissions": ["camera"]
+}

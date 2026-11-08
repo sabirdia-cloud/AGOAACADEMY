@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Production build outputs
+dist/
+dist-*/
+dist_*/
+build/
+builds/archives/*.zip
+builds/apk/*.apk
+release/
+deploy_package/
+
+# Environment files
+.env*
+!.env.example
+!.env.coach
+!.env.parent
+
+# Logs & temp files
+*.log
+.DS_Store
+coverage/

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+
+    <!-- PWA / App Meta -->
+    <meta name="theme-color" content="#09090b" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="الأكاديمية" />
+    <meta name="application-name" content="الأكاديمية" />
+    <meta name="msapplication-TileColor" content="#09090b" />
+    <meta name="format-detection" content="telephone=no" />
+
+    <!-- PWA Manifest -->
+    <link rel="manifest" crossorigin="use-credentials" href="/manifest.json" />
+
+    <!-- App Icons -->
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" id="dynamic-favicon" />
+    <link rel="apple-touch-icon" href="/icon.svg" id="dynamic-apple-icon" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icon.svg" />
+    <link rel="apple-touch-startup-image" href="/icon.svg" />
+
+    <title>فضاء الاكاديمية</title>
+
+    <script>
+      // Force PWA Title, Theme and Icon if settings are cached
+      try {
+        const settings = JSON.parse(localStorage.getItem('academy_settings_cache') || '{}');
+        if (settings.name) {
+          document.title = settings.name;
+          const appTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+          const appName = document.querySelector('meta[name="application-name"]');
+          if (appTitle) appTitle.content = settings.name;
+          if (appName) appName.content = settings.name;
+        }
+        if (settings.logo_url) {
+          const fav = document.getElementById('dynamic-favicon');
+          const apple = document.getElementById('dynamic-apple-icon');
+          if (fav) fav.href = settings.logo_url;
+          if (apple) apple.href = settings.logo_url;
+        }
+      } catch (e) {}
+    </script>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap" rel="stylesheet">
+
+    <style>
+      /* Prevent flash of white on load */
+      html, body { background-color: #09090b; color: #fff; margin: 0; padding: 0; }
+    </style>
+  </head>
+  <body class="bg-zinc-950 text-zinc-50 font-tajawal antialiased">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
