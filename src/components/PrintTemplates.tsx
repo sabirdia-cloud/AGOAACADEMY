@@ -3566,3 +3566,511 @@ export const CategoryPlayersListTemplate: React.FC<{
   );
 };
 
+// ─── Paid Subscribers A4 Sheet Template (40 Players Per Page - Sorted by Age) ───
+export interface PaidSubscribersA4SheetProps {
+  players: any[];
+  subscriptions?: any[];
+  parents?: any[];
+  teams?: any[];
+  academySettings?: any;
+  title?: string;
+  categoryFilter?: string;
+  paymentTypeFilter?: 'all_paid' | 'full' | 'half';
+  containerId?: string;
+}
+
+export const PaidSubscribersA4SheetTemplate: React.FC<PaidSubscribersA4SheetProps> = ({
+  players = [],
+  subscriptions = [],
+  parents = [],
+  teams = [],
+  academySettings,
+  title = "كشف اللاعبين المسددين للاشتراكات",
+  categoryFilter = "all",
+  paymentTypeFilter = "all_paid",
+  containerId = "paid-subscribers-a4-sheet"
+}) => {
+  const academyName = academySettings?.name || "أكاديمية أجيال وادي العثمانية";
+  const academyLogo = academySettings?.logo_url || "/academy-logo.png";
+  const season = academySettings?.current_season || "2025/2026";
+  const today = new Date().toLocaleDateString('fr-FR');
+
+  // Helper to parse birth dates reliably for age sorting (oldest first to youngest last)
+  const parseBirthTime = (d?: string | Date): number => {
+    if (!d) return Infinity; // Put unknown birth dates at the end
+    if (d instanceof Date) return isNaN(d.getTime()) ? Infinity : d.getTime();
+    let clean = String(d).trim();
+    if (clean.includes('T')) clean = clean.split('T')[0];
+    if (clean.includes(' ')) clean = clean.split(' ')[0];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+      const t = new Date(clean).getTime();
+      return isNaN(t) ? Infinity : t;
+    }
+    if (/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}$/.test(clean)) {
+      const parts = clean.split(/[\/\-]/);
+      const day = parts[0].padStart(2, '0');
+      const month = parts[1].padStart(2, '0');
+      const year = parts[2];
+      const t = new Date(`${year}-${month}-${day}`).getTime();
+      return isNaN(t) ? Infinity : t;
+    }
+    const t = new Date(clean).getTime();
+    return isNaN(t) ? Infinity : t;
+  };
+
+  const getAge = (birthDate?: string): string => {
+    if (!birthDate) return '';
+    const parsed = parseBirthTime(birthDate);
+    if (parsed === Infinity) return '';
+    const diff = Date.now() - parsed;
+    const ageDate = new Date(diff);
+    const years = Math.abs(ageDate.getUTCFullYear() - 1970);
+    return years > 0 && years < 60 ? `${years} سنة` : '';
+  };
+
+  const formatDate = (dateStr?: string): string => {
+    if (!dateStr) return '—';
+    let clean = String(dateStr).trim();
+    if (clean.includes('T')) clean = clean.split('T')[0];
+    if (clean.includes(' ')) clean = clean.split(' ')[0];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+      const [y, m, d] = clean.split('-');
+      return `${d}/${m}/${y}`;
+    }
+    return clean;
+  };
+
+  const resolveGuardianName = (p: any): string => {
+    if (p.father_name && String(p.father_name).trim() !== '') return p.father_name;
+    const matchedParent = parents.find((pr: any) =>
+      (p.parent_id && pr.id === p.parent_id) ||
+      (p.parent_username && pr.username === p.parent_username) ||
+      (p.phone && pr.phone === p.phone)
+    );
+    if (matchedParent?.full_name) return matchedParent.full_name;
+    if (p.guardian_name) return p.guardian_name;
+    if (p.parent_name) return p.parent_name;
+    return 'غير مسجل';
+  };
+
+  const resolveGuardianPhone = (p: any): string => {
+    if (p.phone && String(p.phone).trim() !== '') return p.phone;
+    const matchedParent = parents.find((pr: any) =>
+      (p.parent_id && pr.id === p.parent_id) ||
+      (p.parent_username && pr.username === p.parent_username)
+    );
+    if (matchedParent?.phone) return matchedParent.phone;
+    if (p.guardian_phone) return p.guardian_phone;
+    if (p.parent_phone) return p.parent_phone;
+    if (p.emergency_contact) return p.emergency_contact;
+    return '—';
+  };
+
+  // Process paid status for each player
+  const enrichedPaidPlayers = players.filter((p: any) => {
+    // Category filter
+    if (categoryFilter !== 'all' && p.category !== categoryFilter) {
+      return false;
+    }
+
+    const pSubs = subscriptions.filter((s: any) => s.player_id === p.player_id);
+    const totalPaid = pSubs.reduce((sum: number, s: any) => sum + (Number(s.amount) || 0), 0);
+    const hasActiveSub = pSubs.some((s: any) => s.status === 'active' || s.status === 'نشط' || s.status === 'paid');
+
+    const isExempt = pSubs.some((s: any) => 
+      (s.plan_name && (s.plan_name.includes('معفى') || s.plan_name.includes('خاصة') || s.plan_name.includes('إعفاء'))) ||
+      s.status === 'معفى'
+    );
+
+    // Filter paid subscriptions
+    const isPaid = totalPaid > 0 || hasActiveSub;
+    if (!isPaid && !isExempt) return false;
+
+    const hasHalfPlan = pSubs.some((s: any) => (s.plan_name && s.plan_name.includes('نصف')) || Number(s.amount) === 5000);
+    const isFullPaid = totalPaid >= 10000 && !hasHalfPlan;
+    const isHalfPaid = (hasHalfPlan || totalPaid === 5000) && !isFullPaid;
+
+    if (paymentTypeFilter === 'full' && !isFullPaid) return false;
+    if (paymentTypeFilter === 'half' && !isHalfPaid) return false;
+
+    return true;
+  }).map((p: any) => {
+    const pSubs = subscriptions.filter((s: any) => s.player_id === p.player_id);
+    const totalPaid = pSubs.reduce((sum: number, s: any) => sum + (Number(s.amount) || 0), 0);
+    const hasHalfPlan = pSubs.some((s: any) => (s.plan_name && s.plan_name.includes('نصف')) || Number(s.amount) === 5000);
+    const isExempt = pSubs.some((s: any) => 
+      (s.plan_name && (s.plan_name.includes('معفى') || s.plan_name.includes('خاصة') || s.plan_name.includes('إعفاء'))) ||
+      s.status === 'معفى'
+    );
+
+    const isFull = totalPaid >= 10000 && !hasHalfPlan;
+    const isHalf = (hasHalfPlan || totalPaid === 5000) && !isFull;
+
+    let paymentLabel = 'مسدد';
+    let paymentColor = '#047857';
+    let paymentBg = '#ecfdf5';
+    let paymentBorder = '#a7f3d0';
+
+    if (isExempt) {
+      paymentLabel = 'حالة خاصة (معفى)';
+      paymentColor = '#7c3aed';
+      paymentBg = '#f5f3ff';
+      paymentBorder = '#ddd6fe';
+    } else if (isFull) {
+      paymentLabel = `دفعة كاملة (${totalPaid.toLocaleString('fr-FR')} دج)`;
+      paymentColor = '#047857';
+      paymentBg = '#ecfdf5';
+      paymentBorder = '#a7f3d0';
+    } else if (isHalf) {
+      paymentLabel = `نصف دفعة (${totalPaid.toLocaleString('fr-FR')} دج)`;
+      paymentColor = '#b45309';
+      paymentBg = '#fffbeb';
+      paymentBorder = '#fde68a';
+    } else if (totalPaid > 0) {
+      paymentLabel = `مسدد (${totalPaid.toLocaleString('fr-FR')} دج)`;
+      paymentColor = '#047857';
+      paymentBg = '#ecfdf5';
+      paymentBorder = '#a7f3d0';
+    }
+
+    return {
+      ...p,
+      guardian_name: resolveGuardianName(p),
+      guardian_phone: resolveGuardianPhone(p),
+      totalPaid,
+      paymentLabel,
+      paymentColor,
+      paymentBg,
+      paymentBorder,
+      isFull,
+      isHalf,
+      isExempt
+    };
+  });
+
+  // Sort strictly from OLDEST to YOUNGEST (earliest birth date to latest birth date)
+  enrichedPaidPlayers.sort((a: any, b: any) => parseBirthTime(a.birth_date) - parseBirthTime(b.birth_date));
+
+  // Compute statistics
+  const totalPaidSum = enrichedPaidPlayers.reduce((sum: number, p: any) => sum + (p.totalPaid || 0), 0);
+  const fullPaidCount = enrichedPaidPlayers.filter((p: any) => p.isFull).length;
+  const halfPaidCount = enrichedPaidPlayers.filter((p: any) => p.isHalf).length;
+
+  // Split into pages of exactly 40 players
+  const rowsPerPage = 40;
+  const pages: any[][] = [];
+  if (enrichedPaidPlayers.length === 0) {
+    pages.push([]);
+  } else {
+    for (let i = 0; i < enrichedPaidPlayers.length; i += rowsPerPage) {
+      pages.push(enrichedPaidPlayers.slice(i, i + rowsPerPage));
+    }
+  }
+  const totalPages = pages.length;
+
+  const pageStyle: React.CSSProperties = {
+    width: '210mm',
+    height: '297mm',
+    maxHeight: '297mm',
+    padding: '4.5mm',
+    backgroundColor: '#ffffff',
+    direction: 'rtl',
+    fontFamily: "'Tajawal', 'Cairo', 'Segoe UI', sans-serif",
+    color: '#0f172a',
+    boxSizing: 'border-box',
+    position: 'relative',
+    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+    pageBreakAfter: 'always',
+    breakAfter: 'page',
+    margin: '0 auto',
+  };
+
+  const thStyle: React.CSSProperties = {
+    backgroundColor: '#0f172a',
+    color: '#ffffff',
+    padding: '3px 4px',
+    fontWeight: '800',
+    fontSize: '6.8pt',
+    border: '1px solid #1e293b',
+    boxSizing: 'border-box',
+    textAlign: 'center',
+    verticalAlign: 'middle',
+  };
+
+  const tdBase: React.CSSProperties = {
+    padding: '1.5px 4px',
+    border: '1px solid #cbd5e1',
+    color: '#1e293b',
+    fontSize: '6.7pt',
+    boxSizing: 'border-box',
+    verticalAlign: 'middle',
+    lineHeight: '1.2',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  };
+
+  return (
+    <div id={containerId} style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+      {/* Print styles */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        @media print {
+          @page {
+            size: A4 portrait;
+            margin: 0;
+          }
+          body {
+            margin: 0 !important;
+            padding: 0 !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+          .a4-paid-page {
+            page-break-after: always !important;
+            break-after: page !important;
+          }
+          .a4-paid-page:last-child {
+            page-break-after: avoid !important;
+            break-after: avoid !important;
+          }
+        }
+      `}} />
+
+      {pages.map((pagePlayers, pageIdx) => {
+        const isLastPage = pageIdx === totalPages - 1;
+        const pageStartIdx = pageIdx * rowsPerPage;
+
+        // Pad with placeholder rows if less than 40 so it always displays 40 numbered slots
+        const paddedRows: any[] = [...pagePlayers];
+        while (paddedRows.length < 40) {
+          paddedRows.push({ isPlaceholder: true });
+        }
+
+        return (
+          <div key={pageIdx} className="a4-paid-page" style={pageStyle}>
+            {/* Header */}
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              borderBottom: '2.5px solid #0f172a',
+              paddingBottom: '2mm',
+              marginBottom: '1.5mm',
+              flexShrink: 0,
+            }}>
+              <div style={{ textAlign: 'right', flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
+                  <h1 style={{ margin: 0, fontSize: '11.5pt', fontWeight: '900', color: '#0f172a', letterSpacing: '-0.3px' }}>
+                    {academyName}
+                  </h1>
+                  <span style={{ fontSize: '6.8pt', backgroundColor: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', padding: '1.5px 7px', borderRadius: '4px', fontWeight: '800' }}>
+                    سجل رسمي معتمد (40 لاعب بالورقة)
+                  </span>
+                </div>
+                <h2 style={{ margin: '0 0 2px 0', fontSize: '9.8pt', fontWeight: '900', color: '#059669' }}>
+                  {title}
+                </h2>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', fontSize: '6.8pt', color: '#475569' }}>
+                  <span>الموسم: <strong style={{ color: '#0f172a' }}>{season}</strong></span>
+                  <span>الفئة: <strong style={{ color: '#0f172a' }}>{categoryFilter === 'all' ? 'جميع الفئات' : categoryFilter}</strong></span>
+                  <span>النوع: <strong style={{ color: '#0f172a' }}>{paymentTypeFilter === 'full' ? 'دفعة كاملة' : paymentTypeFilter === 'half' ? 'نصف دفعة' : 'جميع المسددين'}</strong></span>
+                  <span>إجمالي المسددين: <strong style={{ color: '#047857', fontFamily: 'monospace' }}>{enrichedPaidPlayers.length} لاعب</strong></span>
+                  <span>الترتيب: <strong style={{ color: '#0f172a' }}>من الأكبر سناً إلى الأصغر سناً ⬇</strong></span>
+                </div>
+              </div>
+              <div style={{ marginRight: '5mm', textAlign: 'center', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {academyLogo ? (
+                  <img src={academyLogo} crossOrigin="anonymous" alt="logo" style={{ height: '52px', maxWidth: '160px', objectFit: 'contain' }} />
+                ) : (
+                  <div style={{
+                    width: '50px', height: '50px', borderRadius: '50%',
+                    background: 'linear-gradient(135deg, #059669, #10b981)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '20pt', color: '#fff', fontWeight: '900'
+                  }}>
+                    {academyName.charAt(0)}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Table (40 rows) */}
+            <div style={{ flex: 1, overflow: 'hidden' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '6.7pt', tableLayout: 'fixed' }}>
+                <thead>
+                  <tr style={{ height: '5.2mm' }}>
+                    <th style={{ ...thStyle, width: '26px', color: '#86efac' }}>ت</th>
+                    <th style={{ ...thStyle, width: '160px', textAlign: 'right' }}>اسم ولقب اللاعب</th>
+                    <th style={{ ...thStyle, width: '85px', textAlign: 'center' }}>تاريخ الميلاد (العمر)</th>
+                    <th style={{ ...thStyle, width: '55px', textAlign: 'center' }}>الفئة</th>
+                    <th style={{ ...thStyle, width: '160px', textAlign: 'right' }}>اسم ولي الأمر</th>
+                    <th style={{ ...thStyle, width: '100px', textAlign: 'center' }}>رقم هاتف الولي</th>
+                    <th style={{ ...thStyle, width: '110px', textAlign: 'center', backgroundColor: '#064e3b', color: '#6ee7b7' }}>
+                      حالة السداد والمبلغ
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paddedRows.map((p, idx) => {
+                    const globalIdx = pageStartIdx + idx + 1;
+                    const isEven = idx % 2 === 0;
+
+                    if (p.isPlaceholder) {
+                      return (
+                        <tr key={`ph-${idx}`} style={{ height: '5.25mm', backgroundColor: isEven ? '#ffffff' : '#f8fafc' }}>
+                          <td style={{ ...tdBase, textAlign: 'center', color: '#94a3b8', fontWeight: '700', fontFamily: 'monospace' }}>
+                            {globalIdx}
+                          </td>
+                          <td style={{ ...tdBase, color: '#e2e8f0' }}>..................................................................</td>
+                          <td style={{ ...tdBase, textAlign: 'center', color: '#e2e8f0' }}>—</td>
+                          <td style={{ ...tdBase, textAlign: 'center', color: '#e2e8f0' }}>—</td>
+                          <td style={{ ...tdBase, color: '#e2e8f0' }}>..................................................................</td>
+                          <td style={{ ...tdBase, textAlign: 'center', color: '#e2e8f0' }}>—</td>
+                          <td style={{ ...tdBase, textAlign: 'center', color: '#e2e8f0' }}>—</td>
+                        </tr>
+                      );
+                    }
+
+                    const ageText = getAge(p.birth_date);
+                    const birthDisplay = p.birth_date ? `${formatDate(p.birth_date)} ${ageText ? `(${ageText})` : ''}` : '—';
+
+                    return (
+                      <tr key={p.player_id || idx} style={{ height: '5.25mm', backgroundColor: isEven ? '#ffffff' : '#f8fafc' }}>
+                        <td style={{ ...tdBase, textAlign: 'center', color: '#047857', fontWeight: '800', fontFamily: 'monospace' }}>
+                          {globalIdx}
+                        </td>
+                        <td style={{ ...tdBase, fontWeight: '800', color: '#0f172a' }}>
+                          {p.name}
+                        </td>
+                        <td style={{ ...tdBase, textAlign: 'center', fontSize: '6.4pt', color: '#334155', fontFamily: 'monospace' }}>
+                          {birthDisplay}
+                        </td>
+                        <td style={{ ...tdBase, textAlign: 'center' }}>
+                          <span style={{
+                            display: 'inline-block',
+                            padding: '1px 5px',
+                            borderRadius: '3px',
+                            fontSize: '6.3pt',
+                            fontWeight: '800',
+                            backgroundColor: '#f1f5f9',
+                            color: '#0f172a',
+                            border: '1px solid #cbd5e1'
+                          }}>
+                            {p.category || '—'}
+                          </span>
+                        </td>
+                        <td style={{ ...tdBase, fontWeight: '700', color: '#1e293b' }}>
+                          {p.guardian_name}
+                        </td>
+                        <td style={{ ...tdBase, textAlign: 'center', fontFamily: 'monospace', fontSize: '6.5pt', color: '#0f172a', direction: 'ltr' }}>
+                          {p.guardian_phone}
+                        </td>
+                        <td style={{ ...tdBase, textAlign: 'center' }}>
+                          <span style={{
+                            display: 'inline-block',
+                            padding: '1px 6px',
+                            borderRadius: '3px',
+                            fontSize: '6.2pt',
+                            fontWeight: '800',
+                            backgroundColor: p.paymentBg,
+                            color: p.paymentColor,
+                            border: `1px solid ${p.paymentBorder}`,
+                            whiteSpace: 'nowrap'
+                          }}>
+                            {p.paymentLabel}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Bottom Section: Summary & Signatures (on Last Page) or continuation notice */}
+            {isLastPage ? (
+              <div style={{ marginTop: '1.5mm', paddingTop: '1mm', flexShrink: 0 }}>
+                {/* Summary Banner */}
+                <div style={{
+                  padding: '2px 8px',
+                  backgroundColor: '#f8fafc',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '4px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  fontSize: '6.5pt',
+                  fontWeight: '700',
+                  marginBottom: '1.5mm',
+                }}>
+                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                    <span style={{ color: '#0f172a' }}>
+                      إجمالي اللاعبين المسددين: <strong style={{ fontFamily: 'monospace', color: '#059669', fontSize: '7.5pt' }}>{enrichedPaidPlayers.length}</strong>
+                    </span>
+                    <span style={{ color: '#047857' }}>
+                      مسدد بالكامل: <strong style={{ fontFamily: 'monospace' }}>{fullPaidCount}</strong>
+                    </span>
+                    <span style={{ color: '#b45309' }}>
+                      نصف دفعة: <strong style={{ fontFamily: 'monospace' }}>{halfPaidCount}</strong>
+                    </span>
+                    <span style={{ color: '#0f172a' }}>
+                      إجمالي المبالغ المحصلة: <strong style={{ fontFamily: 'monospace', color: '#047857', fontSize: '7.5pt' }}>{totalPaidSum.toLocaleString('fr-FR')} دج</strong>
+                    </span>
+                  </div>
+                  <span style={{ color: '#059669', fontWeight: '800' }}>كشف إداري رسمي معتمد</span>
+                </div>
+
+                {/* Signatures */}
+                <div style={{
+                  borderTop: '1px solid #0f172a',
+                  paddingTop: '2mm',
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '30mm',
+                  textAlign: 'center',
+                }}>
+                  <div>
+                    <p style={{ fontWeight: '800', fontSize: '6.8pt', color: '#0f172a', margin: '0 0 3mm' }}>
+                      توقيع ومصادقة المصلحة المالية / المحاسب
+                    </p>
+                    <div style={{ borderBottom: '1px dashed #94a3b8', width: '120px', margin: '0 auto' }}></div>
+                  </div>
+                  <div>
+                    <p style={{ fontWeight: '800', fontSize: '6.8pt', color: '#0f172a', margin: '0 0 3mm' }}>
+                      ختم ومصادقة الإدارة العامة للأكاديمية
+                    </p>
+                    <div style={{ borderBottom: '1px dashed #94a3b8', width: '120px', margin: '0 auto' }}></div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div style={{ marginTop: 'auto', textAlign: 'center', fontSize: '6.4pt', color: '#64748b', paddingTop: '1mm' }}>
+                <span>(تُستكمل القائمة في الصفحة التالية...)</span>
+              </div>
+            )}
+
+            {/* Bottom Footer line */}
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              borderTop: '1px solid #e2e8f0',
+              paddingTop: '1mm',
+              marginTop: '1.5mm',
+              fontSize: '6.2pt',
+              color: '#94a3b8',
+              flexShrink: 0
+            }}>
+              <span>{academyName} — كشف اللاعبين المسددين للاشتراكات (40 لاعب في الورقة مرتبين حسب السن)</span>
+              <span style={{ fontWeight: '700', color: '#0f172a' }}>صفحة {pageIdx + 1} من {totalPages}</span>
+              <span>تاريخ الاستخراج: {today}</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+

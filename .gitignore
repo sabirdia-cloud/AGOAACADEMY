@@ -17,6 +17,9 @@ deploy_package/
 !.env.coach
 !.env.parent
 
+# Vercel
+.vercel
+
 # Logs & temp files
 *.log
 .DS_Store

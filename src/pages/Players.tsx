@@ -6,7 +6,7 @@ import { Plus, Search, Filter, Printer, FileText, CreditCard as IdCard, User, Us
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { api } from "@/services/api";
-import { PlayerApplicationTemplate, PlayerCardTemplate, ScoutReportTemplate, PedagogicalNotebookTemplate, CategoryPlayersListTemplate } from "@/components/PrintTemplates";
+import { PlayerApplicationTemplate, PlayerCardTemplate, ScoutReportTemplate, PedagogicalNotebookTemplate, CategoryPlayersListTemplate, PaidSubscribersA4SheetTemplate } from "@/components/PrintTemplates";
 import { PrintPortal } from "@/components/PrintPortal";
 import { exportToPDF, exportToPNG } from "@/lib/pdf-export";
 import { QRScannerModal } from "@/components/QRScannerModal";
@@ -115,6 +115,14 @@ export function Players() {
   const [reassignCoachId, setReassignCoachId] = useState<number | string>("");
   const [reassignUpdateTeamCoach, setReassignUpdateTeamCoach] = useState(false);
   const [isReassigning, setIsReassigning] = useState(false);
+
+  // Paid Subscribers Sheet (A4 - 40 Players per page)
+  const [isPaidSheetOpen, setIsPaidSheetOpen] = useState(false);
+  const [sheetCategory, setSheetCategory] = useState<string>("all");
+  const [sheetPaymentType, setSheetPaymentType] = useState<"all_paid" | "full" | "half">("all_paid");
+  const [allSubscriptions, setAllSubscriptions] = useState<any[]>([]);
+  const [allParents, setAllParents] = useState<any[]>([]);
+  const [isLoadingPaidData, setIsLoadingPaidData] = useState(false);
 
   // Extract unique categories from teams, categories and players
   const uniqueCategories = Array.from(new Set([
@@ -874,6 +882,130 @@ export function Players() {
     }
   };
 
+  // ─── Paid Subscribers A4 Sheet Handlers ──────────────────────────────────────
+  const handleOpenPaidListSheet = async (category: string = "all", paymentType: "all_paid" | "full" | "half" = "all_paid") => {
+    setSheetCategory(category);
+    setSheetPaymentType(paymentType);
+    setIsPaidSheetOpen(true);
+    if (allSubscriptions.length === 0 || allParents.length === 0) {
+      setIsLoadingPaidData(true);
+      try {
+        const [subs, prnts] = await Promise.all([
+          api.getSubscriptions().catch(() => []),
+          api.getParents().catch(() => [])
+        ]);
+        setAllSubscriptions(subs || []);
+        setAllParents(prnts || []);
+      } catch (err) {
+        console.error("Failed to load subs or parents for paid sheet:", err);
+      } finally {
+        setIsLoadingPaidData(false);
+      }
+    }
+  };
+
+  const handleExportPaidExcel = () => {
+    const parseBirthTime = (birthDate: any): number => {
+      if (!birthDate) return Infinity;
+      const parts = String(birthDate).split(/[-/.]/);
+      let year: number, month: number, day: number;
+      if (parts[0] && parts[0].length === 4) {
+        year = parseInt(parts[0], 10);
+        month = parseInt(parts[1] || '1', 10);
+        day = parseInt(parts[2] || '1', 10);
+      } else if (parts[2] && parts[2].length === 4) {
+        day = parseInt(parts[0] || '1', 10);
+        month = parseInt(parts[1] || '1', 10);
+        year = parseInt(parts[2], 10);
+      } else {
+        const d = new Date(birthDate);
+        return isNaN(d.getTime()) ? Infinity : d.getTime();
+      }
+      const t = new Date(year, month - 1, day).getTime();
+      return isNaN(t) ? Infinity : t;
+    };
+
+    const resolveGuardianName = (p: any): string => {
+      if (p.father_name && String(p.father_name).trim() !== '') return p.father_name;
+      const matchedParent = allParents.find((pr: any) =>
+        (p.parent_id && pr.id === p.parent_id) ||
+        (p.parent_username && pr.username === p.parent_username) ||
+        (p.phone && pr.phone === p.phone)
+      );
+      if (matchedParent?.full_name) return matchedParent.full_name;
+      if (p.guardian_name) return p.guardian_name;
+      if (p.parent_name) return p.parent_name;
+      return 'غير مسجل';
+    };
+
+    const resolveGuardianPhone = (p: any): string => {
+      if (p.phone && String(p.phone).trim() !== '') return p.phone;
+      const matchedParent = allParents.find((pr: any) =>
+        (p.parent_id && pr.id === p.parent_id) ||
+        (p.parent_username && pr.username === p.parent_username)
+      );
+      if (matchedParent?.phone) return matchedParent.phone;
+      if (p.guardian_phone) return p.guardian_phone;
+      if (p.parent_phone) return p.parent_phone;
+      if (p.emergency_contact) return p.emergency_contact;
+      return '—';
+    };
+
+    const filtered = players.filter((p: any) => {
+      if (sheetCategory !== 'all' && p.category !== sheetCategory) return false;
+      const pSubs = allSubscriptions.filter((s: any) => s.player_id === p.player_id);
+      const totalPaid = pSubs.reduce((sum: number, s: any) => sum + (Number(s.amount) || 0), 0);
+      const hasActiveSub = pSubs.some((s: any) => s.status === 'active' || s.status === 'نشط' || s.status === 'paid');
+      const isExempt = pSubs.some((s: any) => 
+        (s.plan_name && (s.plan_name.includes('معفى') || s.plan_name.includes('خاصة') || s.plan_name.includes('إعفاء'))) ||
+        s.status === 'معفى'
+      );
+      const isPaid = totalPaid > 0 || hasActiveSub;
+      if (!isPaid && !isExempt) return false;
+
+      const hasHalfPlan = pSubs.some((s: any) => (s.plan_name && s.plan_name.includes('نصف')) || Number(s.amount) === 5000);
+      const isFullPaid = totalPaid >= 10000 && !hasHalfPlan;
+      const isHalfPaid = (hasHalfPlan || totalPaid === 5000) && !isFullPaid;
+
+      if (sheetPaymentType === 'full' && !isFullPaid) return false;
+      if (sheetPaymentType === 'half' && !isHalfPaid) return false;
+
+      return true;
+    }).sort((a: any, b: any) => parseBirthTime(a.birth_date) - parseBirthTime(b.birth_date));
+
+    const rows = filtered.map((p, idx) => {
+      const pSubs = allSubscriptions.filter((s: any) => s.player_id === p.player_id);
+      const totalPaid = pSubs.reduce((sum: number, s: any) => sum + (Number(s.amount) || 0), 0);
+      const hasHalfPlan = pSubs.some((s: any) => (s.plan_name && s.plan_name.includes('نصف')) || Number(s.amount) === 5000);
+      const isExempt = pSubs.some((s: any) => 
+        (s.plan_name && (s.plan_name.includes('معفى') || s.plan_name.includes('خاصة') || s.plan_name.includes('إعفاء'))) ||
+        s.status === 'معفى'
+      );
+      const isFull = totalPaid >= 10000 && !hasHalfPlan;
+      const isHalf = (hasHalfPlan || totalPaid === 5000) && !isFull;
+      const paymentStatus = isExempt ? 'معفى' : isFull ? `دفعة كاملة (${totalPaid} دج)` : isHalf ? `نصف دفعة (${totalPaid} دج)` : `${totalPaid} دج`;
+
+      return {
+        "ت": idx + 1,
+        "اسم ولقب اللاعب": p.name || '---',
+        "تاريخ الميلاد": p.birth_date || '---',
+        "الفئة": p.category || '---',
+        "اسم ولي الأمر": resolveGuardianName(p),
+        "رقم هاتف الولي": resolveGuardianPhone(p),
+        "حالة السداد": paymentStatus,
+        "المبلغ المسدد (دج)": totalPaid
+      };
+    });
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, "اللاعبين المسددين للاشتراكات");
+    const fileName = `كشف_اللاعبين_المسددين_${sheetCategory !== 'all' ? sheetCategory + '_' : ''}${new Date().toISOString().split('T')[0]}.xlsx`;
+    const excelBuffer = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const blob = new Blob([excelBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=UTF-8" });
+    saveAs(blob, fileName);
+  };
+
   const handleOpenWhatsAppExport = () => {
     const header = "📋 *قائمة الاتصال بأولياء الأمور*\n" + "━━━━━━━━━━━━━━━\n\n";
     const list = filteredPlayers.map((p, index) => {
@@ -1218,6 +1350,13 @@ export function Players() {
           <p className="text-zinc-400 mt-1 text-sm">إدارة شاملة لبيانات اللاعبين وأولياء أمورهم.</p>
         </div>
         <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+          <Button 
+            onClick={() => handleOpenPaidListSheet(selectedCategoryFilter || "all", "all_paid")}
+            className="bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold flex-1 sm:flex-initial shadow-lg shadow-emerald-900/30 border border-emerald-400/30 transition-all hover:scale-[1.02] active:scale-[0.98]"
+          >
+            <Printer className="mr-2 h-4 w-4" />
+            <span>كشف المسددين A4 (40 لاعب)</span>
+          </Button>
           <Button onClick={() => setIsCategoryExportModalOpen(true)} variant="outline" className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 flex-1 sm:flex-initial">
             <FileText className="mr-2 h-4 w-4" />
             تصدير قوائم الفئات PDF
@@ -2177,6 +2316,99 @@ export function Players() {
         </PrintPortal>
       )}
 
+      {/* ── Paid Subscribers A4 Sheet Print Portal ─────────────────────────────────────── */}
+      {isPaidSheetOpen && (
+        <PrintPortal
+          onClose={() => setIsPaidSheetOpen(false)}
+          title={`كشف اللاعبين المسددين لاشتراكاتهم (A4) - ${sheetCategory === 'all' ? 'جميع الفئات' : 'فئة ' + sheetCategory}`}
+          fileName={`Paid-Players-A4-${sheetCategory}-${new Date().toISOString().split('T')[0]}`}
+          id="paid-subscribers-sheet-players"
+        >
+          {/* Top Control Bar in Portal */}
+          <div className="bg-zinc-900 border-b border-zinc-800 p-3 flex flex-wrap items-center justify-between gap-3 text-sm no-print">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1 bg-zinc-950 p-1 rounded-xl border border-zinc-800 text-xs">
+                <span className="text-zinc-400 px-2 font-bold">نوع السداد:</span>
+                <button
+                  type="button"
+                  onClick={() => setSheetPaymentType('all_paid')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                    sheetPaymentType === 'all_paid'
+                      ? 'bg-emerald-500 text-white shadow-sm'
+                      : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  جميع المسددين
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSheetPaymentType('full')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                    sheetPaymentType === 'full'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  دفعة كاملة (10,000 دج)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSheetPaymentType('half')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                    sheetPaymentType === 'half'
+                      ? 'bg-amber-600 text-white shadow-sm'
+                      : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  نصف دفعة (5,000 دج)
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2 bg-zinc-950 px-3 py-1.5 rounded-xl border border-zinc-800 text-xs">
+                <span className="text-zinc-400 font-bold">الفئة:</span>
+                <select
+                  value={sheetCategory}
+                  onChange={(e) => setSheetCategory(e.target.value)}
+                  className="bg-transparent text-white font-bold outline-none cursor-pointer"
+                >
+                  <option value="all" className="bg-zinc-900 text-white">جميع الفئات</option>
+                  {uniqueCategories.map(cat => (
+                    <option key={cat} value={cat} className="bg-zinc-900 text-white">فئة {cat}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleExportPaidExcel}
+              className="flex items-center gap-1.5 bg-emerald-700/80 hover:bg-emerald-600 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95 shadow-sm"
+              title="تصدير كشف إكسل بنفس البيانات والترتيب"
+            >
+              <Download className="h-3.5 w-3.5" />
+              <span>تصدير ملف Excel</span>
+            </button>
+          </div>
+
+          {isLoadingPaidData ? (
+            <div className="flex flex-col items-center justify-center p-12 text-zinc-400">
+              <Loader2 className="h-8 w-8 animate-spin text-emerald-500 mb-2" />
+              <p className="text-sm">جاري جلب بيانات الاشتراكات وأولياء الأمور...</p>
+            </div>
+          ) : (
+            <PaidSubscribersA4SheetTemplate
+              players={players}
+              subscriptions={allSubscriptions}
+              parents={allParents}
+              academySettings={academySettings}
+              categoryFilter={sheetCategory}
+              paymentTypeFilter={sheetPaymentType}
+              containerId="paid-subscribers-sheet-players-content"
+            />
+          )}
+        </PrintPortal>
+      )}
+
       {/* Category PDF Hidden Export Container */}
       {categoryExportData && (
         <div 
@@ -2228,6 +2460,20 @@ export function Players() {
                   </div>
 
                   <div className="flex items-center gap-2">
+                    <Button
+                      onClick={() => {
+                        setIsCategoryExportModalOpen(false);
+                        handleOpenPaidListSheet(cat.name, "all_paid");
+                      }}
+                      variant="outline"
+                      size="sm"
+                      className="border-emerald-500/50 hover:bg-emerald-500/20 text-emerald-400 font-bold text-xs h-8 px-2.5 gap-1.5"
+                      title="كشف المسددين A4 (40 لاعب) لهذه الفئة"
+                    >
+                      <Printer className="h-3.5 w-3.5" />
+                      <span>كشف المسددين</span>
+                    </Button>
+
                     <Button
                       onClick={() => handlePrintCategory(cat.name)}
                       variant="outline"

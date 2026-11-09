@@ -14,7 +14,8 @@ import { tafqeetDinar } from "@/lib/tafqeet";
 import { 
   PlayerCardsBatchTemplate, 
   AdministrativeActivityReportTemplate, 
-  FinancialStatementTemplate 
+  FinancialStatementTemplate,
+  PaidSubscribersA4SheetTemplate
 } from "@/components/PrintTemplates";
 import { 
   BarChart, 
@@ -39,6 +40,7 @@ const reports = [
   { id: 8, type: "matches", title: "تقرير المباريات", description: "سجل المباريات والنتائج (40 مباراة في الصفحة).", icon: Trophy, color: "text-amber-400", bg: "bg-amber-400/10" },
   { id: 9, type: "injuries", title: "تقرير الإصابات", description: "سجل إصابات اللاعبين وحالات التعافي (40 لاعب في الصفحة).", icon: Stethoscope, color: "text-rose-500", bg: "bg-rose-500/10" },
   { id: 10, type: "player_cards", title: "بطاقات اللاعبين", description: "طباعة بطاقات اللاعبين المسددين للاشتراكات (دفعة كاملة أو نصفها) مع فلترة حسب الفئة والفوج (10 بطاقات في الصفحة).", icon: Shield, color: "text-zinc-500", bg: "bg-zinc-500/10" },
+  { id: 11, type: "paid_players_a4", title: "كشف اللاعبين المسددين (A4)", description: "كشف رسمي معتمد لجميع اللاعبين الذين سددو اشتراكاتهم (40 لاعب بالورقة) مرتبين من الأكبر إلى الأصغر سناً مع بيانات ولي الأمر والهاتف.", icon: CreditCard, color: "text-emerald-500", bg: "bg-emerald-500/10" },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1476,6 +1478,22 @@ export function Reports() {
         };
       }
 
+      case "paid_players_a4": {
+        const [pAll, sAll, parentsAll] = await Promise.all([
+          allPlayers.length > 0 ? allPlayers : api.getPlayers(),
+          allSubscriptions.length > 0 ? allSubscriptions : api.getSubscriptions(),
+          api.getParents().catch(() => [])
+        ]);
+
+        return {
+          type: 'paid_players_a4',
+          title: 'كشف اللاعبين المسددين للاشتراكات (مرتبين حسب السن)',
+          players: pAll,
+          subscriptions: sAll,
+          parents: parentsAll
+        };
+      }
+
       default:
         return { type: 'standard', title, data: [], columns: [], isSubscriptionReport: false };
     }
@@ -1533,6 +1551,7 @@ export function Reports() {
 
       const elementId = payload.type === 'administrative' ? 'administrative-report' : 
                         payload.type === 'financial' ? 'financial-statement' : 
+                        payload.type === 'paid_players_a4' ? 'paid-subscribers-a4-report' :
                         'generic-report';
       
       const delay = (payload.type === 'administrative' || payload.type === 'financial') ? 1500 : 900;
@@ -2161,6 +2180,17 @@ export function Reports() {
             />
           )}
 
+          {activeModalReport.type === 'paid_players_a4' && (
+            <PaidSubscribersA4SheetTemplate
+              players={activeModalReport.players}
+              subscriptions={activeModalReport.subscriptions}
+              parents={activeModalReport.parents}
+              academySettings={academySettings}
+              title={activeModalReport.title}
+              containerId="paid-subscribers-a4-report"
+            />
+          )}
+
           {activeModalReport.type === 'player_cards' && (
             <div>
               {/* Interactive Toolbar Inside Modal (Hidden when printing) */}
@@ -2337,6 +2367,16 @@ export function Reports() {
               toDate={formatDateDisplay(endDate)} 
               subscriptionIncomeTotal={offscreenReport.subscriptionIncomeTotal} 
               manualIncomeTotal={offscreenReport.manualIncomeTotal} 
+            />
+          )}
+          {offscreenReport.type === 'paid_players_a4' && (
+            <PaidSubscribersA4SheetTemplate 
+              players={offscreenReport.players} 
+              subscriptions={offscreenReport.subscriptions} 
+              parents={offscreenReport.parents} 
+              academySettings={academySettings} 
+              title={offscreenReport.title} 
+              containerId="paid-subscribers-a4-report"
             />
           )}
         </div>

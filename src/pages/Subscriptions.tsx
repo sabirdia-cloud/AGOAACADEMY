@@ -11,9 +11,11 @@ import {
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { api } from "@/services/api";
-import { SubscriptionReceiptTemplate } from "@/components/PrintTemplates";
+import { SubscriptionReceiptTemplate, PaidSubscribersA4SheetTemplate } from "@/components/PrintTemplates";
 import { PrintPortal } from "@/components/PrintPortal";
 import { exportToPDF } from "@/lib/pdf-export";
+import * as XLSX from "xlsx";
+import { saveAs } from "file-saver";
 
 // ─── Filter Types ─────────────────────────────────────────────────────────────
 type PaymentFilterTab = 'all' | 'full_first' | 'half_first' | 'exempt' | 'unpaid' | 'all_players';
@@ -151,6 +153,12 @@ export function Subscriptions() {
   const [academySettings, setAcademySettings] = useState<any>(null);
   const [selectedPlan, setSelectedPlan] = useState<any>(null);
   const [selectedPlayerId, setSelectedPlayerId] = useState<number | null>(null);
+  const [parents, setParents] = useState<any[]>([]);
+
+  // ─── Paid Subscribers A4 Sheet Modal States ───────────────────────────────
+  const [isPaidSheetOpen, setIsPaidSheetOpen] = useState(false);
+  const [sheetCategory, setSheetCategory] = useState<string>("all");
+  const [sheetPaymentType, setSheetPaymentType] = useState<"all_paid" | "full" | "half">("all_paid");
 
   // ─── Filter States ─────────────────────────────────────────────────────────
   const [paymentFilter, setPaymentFilter] = useState<PaymentFilterTab>('all');
@@ -165,11 +173,12 @@ export function Subscriptions() {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const [subsData, playersData, settingsData, plansData] = await Promise.all([
+      const [subsData, playersData, settingsData, plansData, parentsData] = await Promise.all([
         api.getSubscriptions(),
         api.getPlayers(),
         api.getAcademySettings(),
-        api.getSubscriptionPlans()
+        api.getSubscriptionPlans(),
+        api.getParents().catch(() => [])
       ]);
       // Sort subscriptions strictly by ID ascending to preserve the original registered receipt sequence
       const sortedSubs = (subsData || []).slice().sort((a: any, b: any) => {
@@ -181,11 +190,125 @@ export function Subscriptions() {
       setPlayers(playersData || []);
       setAcademySettings(settingsData);
       setPlans(plansData || []);
+      setParents(parentsData || []);
     } catch (error) {
       console.error("Failed to load data:", error);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleOpenPaidSheetModal = (type: "all_paid" | "full" | "half" = "all_paid") => {
+    setSheetPaymentType(type);
+    if (selectedCategory && selectedCategory !== 'all') {
+      setSheetCategory(selectedCategory);
+    }
+    setIsPaidSheetOpen(true);
+  };
+
+  // ─── Export Paid Players to Excel ──────────────────────────────────────────
+  const handleExportPaidPlayersExcel = () => {
+    const parseBirthTime = (d?: string | Date): number => {
+      if (!d) return Infinity;
+      if (d instanceof Date) return isNaN(d.getTime()) ? Infinity : d.getTime();
+      let clean = String(d).trim();
+      if (clean.includes('T')) clean = clean.split('T')[0];
+      if (clean.includes(' ')) clean = clean.split(' ')[0];
+      if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+        const t = new Date(clean).getTime();
+        return isNaN(t) ? Infinity : t;
+      }
+      if (/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}$/.test(clean)) {
+        const parts = clean.split(/[\/\-]/);
+        const day = parts[0].padStart(2, '0');
+        const month = parts[1].padStart(2, '0');
+        const year = parts[2];
+        const t = new Date(`${year}-${month}-${day}`).getTime();
+        return isNaN(t) ? Infinity : t;
+      }
+      const t = new Date(clean).getTime();
+      return isNaN(t) ? Infinity : t;
+    };
+
+    const resolveGuardianName = (p: any): string => {
+      if (p.father_name && String(p.father_name).trim() !== '') return p.father_name;
+      const matchedParent = parents.find((pr: any) =>
+        (p.parent_id && pr.id === p.parent_id) ||
+        (p.parent_username && pr.username === p.parent_username) ||
+        (p.phone && pr.phone === p.phone)
+      );
+      if (matchedParent?.full_name) return matchedParent.full_name;
+      if (p.guardian_name) return p.guardian_name;
+      if (p.parent_name) return p.parent_name;
+      return 'غير مسجل';
+    };
+
+    const resolveGuardianPhone = (p: any): string => {
+      if (p.phone && String(p.phone).trim() !== '') return p.phone;
+      const matchedParent = parents.find((pr: any) =>
+        (p.parent_id && pr.id === p.parent_id) ||
+        (p.parent_username && pr.username === p.parent_username)
+      );
+      if (matchedParent?.phone) return matchedParent.phone;
+      if (p.guardian_phone) return p.guardian_phone;
+      if (p.parent_phone) return p.parent_phone;
+      if (p.emergency_contact) return p.emergency_contact;
+      return '—';
+    };
+
+    const filtered = players.filter((p: any) => {
+      if (sheetCategory !== 'all' && p.category !== sheetCategory) return false;
+      const pSubs = subscriptions.filter((s: any) => s.player_id === p.player_id);
+      const totalPaid = pSubs.reduce((sum: number, s: any) => sum + (Number(s.amount) || 0), 0);
+      const hasActiveSub = pSubs.some((s: any) => s.status === 'active' || s.status === 'نشط' || s.status === 'paid');
+      const isExempt = pSubs.some((s: any) => 
+        (s.plan_name && (s.plan_name.includes('معفى') || s.plan_name.includes('خاصة') || s.plan_name.includes('إعفاء'))) ||
+        s.status === 'معفى'
+      );
+      const isPaid = totalPaid > 0 || hasActiveSub;
+      if (!isPaid && !isExempt) return false;
+
+      const hasHalfPlan = pSubs.some((s: any) => (s.plan_name && s.plan_name.includes('نصف')) || Number(s.amount) === 5000);
+      const isFullPaid = totalPaid >= 10000 && !hasHalfPlan;
+      const isHalfPaid = (hasHalfPlan || totalPaid === 5000) && !isFullPaid;
+
+      if (sheetPaymentType === 'full' && !isFullPaid) return false;
+      if (sheetPaymentType === 'half' && !isHalfPaid) return false;
+
+      return true;
+    }).sort((a: any, b: any) => parseBirthTime(a.birth_date) - parseBirthTime(b.birth_date));
+
+    const rows = filtered.map((p, idx) => {
+      const pSubs = subscriptions.filter((s: any) => s.player_id === p.player_id);
+      const totalPaid = pSubs.reduce((sum: number, s: any) => sum + (Number(s.amount) || 0), 0);
+      const hasHalfPlan = pSubs.some((s: any) => (s.plan_name && s.plan_name.includes('نصف')) || Number(s.amount) === 5000);
+      const isExempt = pSubs.some((s: any) => 
+        (s.plan_name && (s.plan_name.includes('معفى') || s.plan_name.includes('خاصة') || s.plan_name.includes('إعفاء'))) ||
+        s.status === 'معفى'
+      );
+      const isFull = totalPaid >= 10000 && !hasHalfPlan;
+      const isHalf = (hasHalfPlan || totalPaid === 5000) && !isFull;
+      const paymentStatus = isExempt ? 'معفى' : isFull ? `دفعة كاملة (${totalPaid} دج)` : isHalf ? `نصف دفعة (${totalPaid} دج)` : `${totalPaid} دج`;
+
+      return {
+        "ت": idx + 1,
+        "اسم ولقب اللاعب": p.name || '---',
+        "تاريخ الميلاد": p.birth_date || '---',
+        "الفئة": p.category || '---',
+        "اسم ولي الأمر": resolveGuardianName(p),
+        "رقم هاتف الولي": resolveGuardianPhone(p),
+        "حالة السداد": paymentStatus,
+        "المبلغ المسدد (دج)": totalPaid
+      };
+    });
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, "اللاعبين المسددين للاشتراكات");
+    const fileName = `كشف_اللاعبين_المسددين_${sheetCategory !== 'all' ? sheetCategory + '_' : ''}${new Date().toISOString().split('T')[0]}.xlsx`;
+    const excelBuffer = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const blob = new Blob([excelBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=UTF-8" });
+    saveAs(blob, fileName);
   };
 
   const handleExportPDF = (sub: any) => {
@@ -851,6 +974,14 @@ export function Subscriptions() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
+          <Button
+            onClick={() => handleOpenPaidSheetModal("all_paid")}
+            className="bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 hover:from-emerald-500 hover:to-teal-500 text-white h-11 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 shadow-lg shadow-emerald-700/25 border border-emerald-400/30 transition-all hover:scale-[1.02] active:scale-[0.98]"
+          >
+            <Printer className="h-4 w-4" />
+            <span>كشف المسددين A4 (40 لاعب)</span>
+          </Button>
+
           <Button
             onClick={() => navigate('/admin/coach-payroll')}
             variant="outline"
@@ -1622,6 +1753,93 @@ export function Subscriptions() {
           </div>
         </div>
       </Modal>
+
+      {/* ── Paid Subscribers A4 Sheet Print Portal (40 Players Per Page) ── */}
+      {isPaidSheetOpen && (
+        <PrintPortal
+          isOpen={isPaidSheetOpen}
+          onClose={() => setIsPaidSheetOpen(false)}
+          title="كشف اللاعبين المسددين للاشتراكات (A4 - 40 لاعب بالورقة مرتبين حسب السن)"
+          fileName={`كشف_المسددين_${sheetCategory === 'all' ? 'جميع_الفئات' : sheetCategory}_${new Date().toISOString().split('T')[0]}`}
+          id="paid-subscribers-sheet-portal"
+        >
+          {/* Top Filter Controls inside modal (Hidden during printing) */}
+          <div className="p-4 bg-zinc-900 border-b border-zinc-800 flex flex-wrap items-center justify-between gap-4 no-print" dir="rtl">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-1.5 bg-zinc-950 p-1 rounded-xl border border-zinc-800 text-xs">
+                <span className="text-zinc-400 px-2 font-bold">نوع السداد:</span>
+                <button
+                  type="button"
+                  onClick={() => setSheetPaymentType('all_paid')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                    sheetPaymentType === 'all_paid'
+                      ? 'bg-emerald-500 text-white shadow-sm'
+                      : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  جميع المسددين
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSheetPaymentType('full')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                    sheetPaymentType === 'full'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  دفعة كاملة (10,000 دج)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSheetPaymentType('half')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                    sheetPaymentType === 'half'
+                      ? 'bg-amber-600 text-white shadow-sm'
+                      : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  نصف دفعة (5,000 دج)
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2 bg-zinc-950 px-3 py-1.5 rounded-xl border border-zinc-800 text-xs">
+                <span className="text-zinc-400 font-bold">الفئة:</span>
+                <select
+                  value={sheetCategory}
+                  onChange={(e) => setSheetCategory(e.target.value)}
+                  className="bg-transparent text-white font-bold outline-none cursor-pointer"
+                >
+                  <option value="all" className="bg-zinc-900 text-white">جميع الفئات</option>
+                  {categories.map(cat => (
+                    <option key={cat} value={cat} className="bg-zinc-900 text-white">{cat}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleExportPaidPlayersExcel}
+              className="flex items-center gap-1.5 bg-emerald-700/80 hover:bg-emerald-600 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95 shadow-sm"
+              title="تصدير كشف إكسل بنفس البيانات والترتيب"
+            >
+              <Download className="h-3.5 w-3.5" />
+              <span>تصدير ملف Excel</span>
+            </button>
+          </div>
+
+          <PaidSubscribersA4SheetTemplate
+            players={players}
+            subscriptions={subscriptions}
+            parents={parents}
+            academySettings={academySettings}
+            categoryFilter={sheetCategory}
+            paymentTypeFilter={sheetPaymentType}
+            containerId="paid-subscribers-sheet-portal-content"
+          />
+        </PrintPortal>
+      )}
 
       {/* ── Export Receipt Portal ─────────────────────────────────────────── */}
       {printData && (
