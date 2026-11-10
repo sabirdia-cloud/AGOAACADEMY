@@ -10,7 +10,7 @@ import {
   ClipboardCheck, Play, ChevronDown, ChevronUp, QrCode, Camera,
   Trophy, Swords, FileText, Stethoscope, Plus, Save, Trash2,
   LayoutDashboard, MapPin, CheckCircle, XCircle, RefreshCw,
-  Menu, ArrowLeft, Flashlight, Send, Sparkles
+  Menu, ArrowLeft, Flashlight, Send, Sparkles, ShoppingBag
 } from "lucide-react";
 import { FUTPlayerCard } from "@/components/FUTPlayerCard";
 
@@ -55,6 +55,14 @@ const statusColors: Record<string, string> = {
 };
 const statusLabel: Record<string, string> = {
   active: "نشط", inactive: "غير نشط", suspended: "موقوف", injured: "مصاب"
+};
+
+const extractBagNumber = (notes?: string) => {
+  if (!notes) return "";
+  const match = notes.match(/\[(?:رقم الحقيبة|رقم القطعة|رقم الحقيبة \/ القطعة):\s*([^\]]+)\]/i);
+  if (match) return match[1].trim();
+  const fallback = notes.match(/\[حقيبة:\s*([^\]]+)\]/i);
+  return fallback ? fallback[1].trim() : "";
 };
 
 const getAge = (dob: string) => {
@@ -291,9 +299,17 @@ function LoginScreen({ onLogin }: { onLogin: (user: any) => void }) {
 }
 
 // ─── Dashboard Screen ─────────────────────────────────────────────────────────
-function DashboardScreen({ user, players, trainings, coachData, selectedTeam, coachTeams = [], onSelectTeam, onNavigate }: any) {
+function DashboardScreen({ user, players, trainings, matches = [], kits = [], coachData, selectedTeam, coachTeams = [], onSelectTeam, onNavigate }: any) {
+  const [bagSearch, setBagSearch] = useState("");
   const activePlayers = players.filter((p: any) => p.status === "active" || !p.status);
   const injuredPlayers = players.filter((p: any) => p.status === "injured");
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  // Sessions completed (date <= today)
+  const completedTrainings = trainings.filter((t: any) => (t.date || "").split('T')[0] <= todayStr);
+  const completedMatches = matches.filter((m: any) => (m.match_date || m.date || "").split('T')[0] <= todayStr);
+  const totalCompletedSessions = completedTrainings.length + completedMatches.length;
+
   const today = new Date();
   const upcoming = trainings
     .filter((t: any) => new Date(t.date) >= today)
@@ -301,6 +317,47 @@ function DashboardScreen({ user, players, trainings, coachData, selectedTeam, co
   const lastTraining = trainings
     .filter((t: any) => new Date(t.date) < today)
     .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+
+  // Bag search result (Read-Only)
+  const bagMatchResult = useMemo(() => {
+    const q = bagSearch.trim().toLowerCase();
+    if (!q) return null;
+
+    // Search in kits table first
+    const matchedKit = kits.find((k: any) => {
+      const bagNum = extractBagNumber(k.notes).toLowerCase();
+      return bagNum === q;
+    });
+
+    if (matchedKit) {
+      const p = players.find((pl: any) => Number(pl.player_id) === Number(matchedKit.player_id));
+      if (p) {
+        return {
+          player: p,
+          bagNumber: extractBagNumber(matchedKit.notes),
+          kitStatus: matchedKit.status === 'delivered' ? 'مستلم' : 'قيد التجهيز',
+          isMyPlayer: true
+        };
+      }
+    }
+
+    // Fallback: search in players notes or custom fields
+    const matchedPlayer = players.find((pl: any) => {
+      const bagNum = extractBagNumber(pl.notes).toLowerCase();
+      return bagNum === q || (pl.bag_number && String(pl.bag_number).toLowerCase() === q);
+    });
+
+    if (matchedPlayer) {
+      return {
+        player: matchedPlayer,
+        bagNumber: bagSearch.trim(),
+        kitStatus: 'مسجل',
+        isMyPlayer: true
+      };
+    }
+
+    return { notFound: true, searchedQuery: bagSearch.trim() };
+  }, [bagSearch, kits, players]);
 
   const quickActions = [
     { icon: <QrCode size={20} color={C.green} />, label: "تسجيل الحضور بـ QR", sub: "مسح رمز اللاعبين", view: "attendance" as View, color: C.green },
@@ -443,11 +500,161 @@ function DashboardScreen({ user, players, trainings, coachData, selectedTeam, co
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 22 }}>
+      {/* Bag Number Quick Search (Read Only) */}
+      <div style={{
+        background: "rgba(255,255,255,0.04)",
+        border: `1px solid ${bagMatchResult?.player ? C.green : C.border}`,
+        borderRadius: 18,
+        padding: "16px 14px",
+        marginBottom: 20
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <div style={{ width: 28, height: 28, borderRadius: 8, background: "rgba(245,158,11,0.15)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <ShoppingBag size={15} color={C.amber} />
+            </div>
+            <div>
+              <p style={{ color: "#fff", fontSize: 13, fontWeight: 900, margin: 0 }}>بحث سريع برقم الحقيبة</p>
+              <p style={{ color: C.muted, fontSize: 10, margin: 0 }}>عرض اسم صاحب الحقيبة دون تعديل (قراءة فقط 🔒)</p>
+            </div>
+          </div>
+          <span style={{ background: "rgba(255,255,255,0.06)", color: C.muted, fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 8 }}>
+            للمعاينة فقط
+          </span>
+        </div>
+
+        <div style={{ position: "relative" }}>
+          <ShoppingBag size={14} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: C.amber }} />
+          <input
+            type="text"
+            value={bagSearch}
+            onChange={(e) => setBagSearch(e.target.value)}
+            placeholder="اكتب رقم الحقيبة هنا (مثال: 12، B-05)..."
+            style={{
+              width: "100%",
+              background: "rgba(0,0,0,0.4)",
+              border: `1px solid ${bagSearch ? C.amber : C.border}`,
+              borderRadius: 12,
+              padding: "10px 38px 10px 14px",
+              color: "#fff",
+              fontSize: 13,
+              outline: "none",
+              direction: "rtl"
+            }}
+          />
+          {bagSearch && (
+            <button
+              onClick={() => setBagSearch("")}
+              style={{
+                position: "absolute",
+                left: 10,
+                top: "50%",
+                transform: "translateY(-50%)",
+                background: "none",
+                border: "none",
+                color: C.muted,
+                cursor: "pointer",
+                padding: 4
+              }}
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+
+        {/* Search Result Box */}
+        {bagMatchResult && (
+          <div style={{ marginTop: 12 }}>
+            {bagMatchResult.player ? (
+              <div style={{
+                background: "linear-gradient(135deg, rgba(16,185,129,0.12), rgba(6,78,59,0.2))",
+                border: "1px solid rgba(16,185,129,0.35)",
+                borderRadius: 14,
+                padding: 12,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 12,
+                    background: "rgba(0,0,0,0.5)",
+                    border: "1.5px solid rgba(16,185,129,0.4)",
+                    overflow: "hidden",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0
+                  }}>
+                    {bagMatchResult.player.photo_url ? (
+                      <img src={bagMatchResult.player.photo_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    ) : (
+                      <User size={22} color={C.green} />
+                    )}
+                  </div>
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ color: "#fff", fontSize: 14, fontWeight: 900 }}>{bagMatchResult.player.name}</span>
+                      <span style={{ background: "rgba(245,158,11,0.2)", color: C.amber, fontSize: 10, fontWeight: 900, padding: "1px 6px", borderRadius: 6 }}>
+                        حقيبة #{bagMatchResult.bagNumber}
+                      </span>
+                    </div>
+                    <p style={{ color: C.muted, fontSize: 11, marginTop: 2 }}>
+                      الفئة: {bagMatchResult.player.category || "غير محدد"} • المركز: {bagMatchResult.player.position || "لاعب"}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => onNavigate("player_detail", bagMatchResult.player)}
+                  style={{
+                    background: C.green,
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 10,
+                    padding: "7px 12px",
+                    fontSize: 11,
+                    fontWeight: 800,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap"
+                  }}
+                >
+                  عرض الملف 👁️
+                </button>
+              </div>
+            ) : (
+              <div style={{
+                background: "rgba(239,68,68,0.08)",
+                border: "1px solid rgba(239,68,68,0.2)",
+                borderRadius: 12,
+                padding: "10px 14px",
+                color: C.red,
+                fontSize: 12,
+                fontWeight: 700,
+                textAlign: "center"
+              }}>
+                ❌ لا يوجد لاعب مرتبط برقم الحقيبة: «{bagMatchResult.searchedQuery}» ضمن فوجك
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Stats Cards: Players, Completed Sessions & Matches */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
         <StatBadge label="لاعبي الفوج" value={players.length} icon={<Users size={16} />} color={C.green} />
         <StatBadge label="النشطون" value={activePlayers.length} icon={<Activity size={16} />} color={C.purple} />
         <StatBadge label="المصابون" value={injuredPlayers.length} icon={<Heart size={16} />} color={C.red} />
+      </div>
+
+      {/* Completed Sessions & Matches Counters */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 22 }}>
+        <StatBadge label="حصص منجزة" value={completedTrainings.length} icon={<Calendar size={16} />} color={C.blue} />
+        <StatBadge label="مباريات ملعوبة" value={completedMatches.length} icon={<Trophy size={16} />} color="#e11d48" />
+        <StatBadge label="إجمالي الأنشطة" value={totalCompletedSessions} icon={<CheckCircle size={16} />} color={C.amber} />
       </div>
 
       {/* Quick Actions Grid */}
@@ -469,18 +676,34 @@ function DashboardScreen({ user, players, trainings, coachData, selectedTeam, co
 }
 
 // ─── Players Screen ───────────────────────────────────────────────────────────
-function PlayersScreen({ players, coachTeams = [], selectedTeam, onSelectTeam, onNavigate }: any) {
+function PlayersScreen({ players, kits = [], coachTeams = [], selectedTeam, onSelectTeam, onNavigate }: any) {
   const [query, setQuery] = useState("");
+  const [bagQuery, setBagQuery] = useState("");
   const [posFilter, setPosFilter] = useState("الكل");
   const [statusFilter, setStatusFilter] = useState("الكل");
+
+  // Helper to get player's bag number
+  const getPlayerBagNumber = (playerId: number, notes?: string) => {
+    const k = kits.find((item: any) => Number(item.player_id) === Number(playerId));
+    if (k) {
+      const bn = extractBagNumber(k.notes);
+      if (bn) return bn;
+    }
+    return extractBagNumber(notes) || "";
+  };
 
   const positions = ["الكل", ...Array.from(new Set(players.map((p: any) => p.position || "لاعب")))];
   const filtered = players.filter((p: any) => {
     const mTeam = !selectedTeam || !p.team_id || Number(p.team_id) === Number(selectedTeam.team_id);
     const mQ = !query || p.name?.toLowerCase().includes(query.toLowerCase()) || p.jersey_number?.toString().includes(query);
+    
+    // Bag number filter
+    const playerBag = getPlayerBagNumber(p.player_id, p.notes);
+    const mBag = !bagQuery.trim() || playerBag.toLowerCase().includes(bagQuery.trim().toLowerCase());
+
     const mP = posFilter === "الكل" || (p.position || "لاعب") === posFilter;
     const mS = statusFilter === "الكل" || p.status === statusFilter;
-    return mTeam && mQ && mP && mS;
+    return mTeam && mQ && mBag && mP && mS;
   });
 
   return (
@@ -528,11 +751,22 @@ function PlayersScreen({ players, coachTeams = [], selectedTeam, onSelectTeam, o
           </div>
         )}
 
-        <div style={{ position: "relative", marginBottom: 8 }}>
-          <Search size={14} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: C.muted }} />
-          <input type="text" value={query} onChange={e => setQuery(e.target.value)} placeholder="بحث بالاسم أو الرقم..."
-            style={{ width: "100%", background: "rgba(255,255,255,0.06)", border: `1px solid ${C.border}`, borderRadius: 12, padding: "9px 36px 9px 14px", color: "#fff", fontSize: 13, outline: "none" }} />
-          {query && <button onClick={() => setQuery("")} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: C.muted }}><X size={14} /></button>}
+        {/* Dual Search: Name/Number + Bag Number */}
+        <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 8, marginBottom: 8 }}>
+          <div style={{ position: "relative" }}>
+            <Search size={14} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color: C.muted }} />
+            <input type="text" value={query} onChange={e => setQuery(e.target.value)} placeholder="بحث بالاسم أو الرقم..."
+              style={{ width: "100%", background: "rgba(255,255,255,0.06)", border: `1px solid ${C.border}`, borderRadius: 12, padding: "8px 30px 8px 10px", color: "#fff", fontSize: 12, outline: "none" }} />
+            {query && <button onClick={() => setQuery("")} style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: C.muted }}><X size={12} /></button>}
+          </div>
+
+          <div style={{ position: "relative" }}>
+            <ShoppingBag size={14} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color: bagQuery ? C.amber : C.muted }} />
+            <input type="text" value={bagQuery} onChange={e => setBagQuery(e.target.value)} placeholder="رقم الحقيبة 🔒"
+              title="بحث برقم الحقيبة (قراءة فقط)"
+              style={{ width: "100%", background: "rgba(255,255,255,0.06)", border: `1px solid ${bagQuery ? C.amber : C.border}`, borderRadius: 12, padding: "8px 30px 8px 10px", color: bagQuery ? C.amber : "#fff", fontSize: 12, outline: "none" }} />
+            {bagQuery && <button onClick={() => setBagQuery("")} style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: C.muted }}><X size={12} /></button>}
+          </div>
         </div>
         <div className="scroll-hide" style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2 }}>
           {(positions as string[]).map((p: string) => {
@@ -578,9 +812,17 @@ function PlayersScreen({ players, coachTeams = [], selectedTeam, onSelectTeam, o
                       <div style={{ width: 7, height: 7, borderRadius: "50%", background: statusColors[p.status] || C.green }} />
                     </div>
                     <p style={{ color: C.text, fontSize: 15, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</p>
-                    <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
+                    <div style={{ display: "flex", gap: 8, marginTop: 2, flexWrap: "wrap", alignItems: "center" }}>
                       {p.date_of_birth && <span style={{ color: C.muted, fontSize: 11 }}>{getAge(p.date_of_birth)} سنة</span>}
                       {p.nationality && <span style={{ color: C.muted, fontSize: 11 }}>• {p.nationality}</span>}
+                      {(() => {
+                        const bag = getPlayerBagNumber(p.player_id, p.notes);
+                        return bag ? (
+                          <span style={{ background: "rgba(245,158,11,0.15)", color: C.amber, border: "1px solid rgba(245,158,11,0.3)", fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 6, display: "inline-flex", alignItems: "center", gap: 3 }}>
+                            <ShoppingBag size={10} /> حقيبة #{bag} 🔒
+                          </span>
+                        ) : null;
+                      })()}
                     </div>
                   </div>
                   <ChevronLeft size={16} color={C.dim} />
@@ -595,7 +837,7 @@ function PlayersScreen({ players, coachTeams = [], selectedTeam, onSelectTeam, o
 }
 
 // ─── Player Detail Screen ─────────────────────────────────────────────────────
-function PlayerDetailScreen({ player, onBack, user }: any) {
+function PlayerDetailScreen({ player, kits = [], onBack, user }: any) {
   const cfg = getPosConfig(player.position);
   const [stats, setStats] = useState<any>(null);
   const [attendance, setAttendance] = useState<any[]>([]);
@@ -604,6 +846,16 @@ function PlayerDetailScreen({ player, onBack, user }: any) {
   const [evals, setEvals] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [tab, setTab] = useState<"info" | "stats" | "att" | "injuries" | "physical" | "evals" | "fut">("info");
+
+  // Get player's bag number (read-only)
+  const playerBagNumber = useMemo(() => {
+    const k = kits.find((item: any) => Number(item.player_id) === Number(player.player_id));
+    if (k) {
+      const bn = extractBagNumber(k.notes);
+      if (bn) return bn;
+    }
+    return extractBagNumber(player.notes) || (player.bag_number ? String(player.bag_number) : "");
+  }, [player, kits]);
 
   useEffect(() => {
     const load = async () => {
@@ -688,7 +940,35 @@ function PlayerDetailScreen({ player, onBack, user }: any) {
           <>
             {tab === "info" && (
               <div>
+                {/* Bag Number Display - Read Only */}
+                <div style={{
+                  background: "linear-gradient(135deg, rgba(245,158,11,0.12), rgba(217,119,6,0.06))",
+                  border: "1px solid rgba(245,158,11,0.3)",
+                  borderRadius: 14,
+                  padding: "12px 14px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: 10
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(245,158,11,0.2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <ShoppingBag size={18} color={C.amber} />
+                    </div>
+                    <div>
+                      <p style={{ color: C.muted, fontSize: 11, fontWeight: 700, margin: 0 }}>رقم حقيبة اللاعب</p>
+                      <p style={{ color: playerBagNumber ? C.amber : C.muted, fontSize: 15, fontWeight: 900, margin: "2px 0 0" }}>
+                        {playerBagNumber ? `حقيبة رقم: #${playerBagNumber}` : "لم يتم تسجيل رقم حقيبة"}
+                      </p>
+                    </div>
+                  </div>
+                  <span style={{ background: "rgba(0,0,0,0.3)", color: C.muted, border: "1px solid rgba(255,255,255,0.08)", fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 8 }}>
+                    للمعاينة فقط 🔒
+                  </span>
+                </div>
+
                 <InfoRow label="تاريخ الميلاد" value={player.date_of_birth ? `${fmt(player.date_of_birth)} (${getAge(player.date_of_birth)} سنة)` : null} icon={<Calendar size={15} />} color={cfg.color} />
+                <InfoRow label="الفئة" value={player.category || "غير محدد"} icon={<Shield size={15} />} color={cfg.color} />
                 <InfoRow label="الجنسية" value={player.nationality} icon={<Shield size={15} />} color={cfg.color} />
                 <InfoRow label="الولاية" value={player.wilaya} icon={<MapPin size={15} />} color={cfg.color} />
                 <InfoRow label="رقم القميص" value={player.jersey_number ? `#${player.jersey_number}` : null} icon={<Award size={15} />} color={cfg.color} />
@@ -2828,12 +3108,24 @@ function MatchesScreen({ coachData, user, coachTeams }: any) {
     const load = async () => {
       setIsLoading(true);
       try {
-        const { data } = await supabase.from("matches").select("*").order("match_date", { ascending: false });
+        let allMatchesList: any[] = [];
+        try {
+          const { data: emsData } = await supabase.from("ems_matches").select("*").order("match_date", { ascending: false });
+          if (emsData && emsData.length > 0) allMatchesList = emsData;
+        } catch { }
+
+        if (allMatchesList.length === 0) {
+          try {
+            const { data: stdData } = await supabase.from("matches").select("*").order("match_date", { ascending: false });
+            if (stdData) allMatchesList = stdData;
+          } catch { }
+        }
+
         const coachId = coachData?.coach_id || user?.coach_id;
         const coachCat = coachData?.category || user?.category;
         const myTeamIds = (coachTeams || []).map((t: any) => Number(t.team_id));
 
-        const myMatches = (data || []).filter((m: any) =>
+        const myMatches = allMatchesList.filter((m: any) =>
           (m.team_id && myTeamIds.includes(Number(m.team_id))) ||
           (coachCat && m.category === coachCat) ||
           (coachId && Number(m.coach_id) === Number(coachId))
@@ -3640,6 +3932,8 @@ export function CoachPlayerApp() {
   const [view, setView] = useState<View>("dashboard");
   const [players, setPlayers] = useState<any[]>([]);
   const [trainings, setTrainings] = useState<any[]>([]);
+  const [matches, setMatches] = useState<any[]>([]);
+  const [kits, setKits] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState<any>(null);
   const [showMenu, setShowMenu] = useState(false);
@@ -3711,7 +4005,7 @@ export function CoachPlayerApp() {
         .from("training")
         .select("*")
         .order("date", { ascending: false })
-        .limit(40);
+        .limit(60);
 
       const myTrainings = (allTrainings || []).filter((t: any) =>
         (t.team_id && myTeamIds.includes(Number(t.team_id))) ||
@@ -3719,6 +4013,35 @@ export function CoachPlayerApp() {
         (coachId && Number(t.coach_id) === Number(coachId))
       );
       setTrainings(myTrainings);
+
+      // 4. Fetch matches strictly for this coach's team and category
+      let allMatchesList: any[] = [];
+      try {
+        const { data: emsM } = await supabase.from("ems_matches").select("*").order("match_date", { ascending: false });
+        if (emsM && emsM.length > 0) allMatchesList = emsM;
+      } catch { }
+
+      if (allMatchesList.length === 0) {
+        try {
+          const { data: stdM } = await supabase.from("matches").select("*").order("match_date", { ascending: false });
+          if (stdM) allMatchesList = stdM;
+        } catch { }
+      }
+
+      const myMatches = allMatchesList.filter((m: any) =>
+        (m.team_id && myTeamIds.includes(Number(m.team_id))) ||
+        (m.category && myCategories.includes(m.category)) ||
+        (coachId && Number(m.coach_id) === Number(coachId))
+      );
+      setMatches(myMatches);
+
+      // 5. Fetch kits for bag lookup
+      try {
+        const { data: kitsData } = await supabase.from("kits").select("*");
+        setKits(kitsData || []);
+      } catch (e) {
+        console.warn("Could not load kits:", e);
+      }
     } catch (err) {
       console.error("Load error:", err);
     } finally {
@@ -3767,6 +4090,8 @@ export function CoachPlayerApp() {
               user={user}
               players={players}
               trainings={trainings}
+              matches={matches}
+              kits={kits}
               coachData={coachData}
               selectedTeam={selectedTeam}
               coachTeams={coachTeams}
@@ -3777,13 +4102,14 @@ export function CoachPlayerApp() {
           {view === "players" && (
             <PlayersScreen
               players={players}
+              kits={kits}
               coachTeams={coachTeams}
               selectedTeam={selectedTeam}
               onSelectTeam={setSelectedTeam}
               onNavigate={handleNavigate}
             />
           )}
-          {view === "player_detail" && selectedPlayer && <PlayerDetailScreen player={selectedPlayer} onBack={() => setView("players")} user={user} />}
+          {view === "player_detail" && selectedPlayer && <PlayerDetailScreen player={selectedPlayer} kits={kits} onBack={() => setView("players")} user={user} />}
           {view === "attendance" && <AttendanceScreen players={players} coachData={coachData} user={user} onNavigate={handleNavigate} />}
           {view === "training" && <TrainingScreen coachData={coachData} user={user} onNavigate={handleNavigate} />}
           {view === "notebook" && <NotebookScreen players={players} coachData={coachData} />}

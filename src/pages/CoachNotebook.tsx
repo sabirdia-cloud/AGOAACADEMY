@@ -3,7 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { 
   Users, Calendar, Trophy, Star, ClipboardCheck, 
   User, Activity, Download, ChevronLeft, Shield, FileText,
-  Stethoscope, LayoutDashboard, Sparkles, QrCode, Swords, Phone
+  Stethoscope, LayoutDashboard, Sparkles, QrCode, Swords, Phone,
+  ShoppingBag, Search, X, CheckCircle
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -24,14 +25,19 @@ export function CoachNotebook() {
   const navigate = useNavigate();
 
   const [players, setPlayers] = useState<any[]>([]);
+  const [kits, setKits] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedPlayer, setSelectedPlayer] = useState<any>(null);
   const [isPlayerModalOpen, setIsPlayerModalOpen] = useState(false);
+  const [bagSearch, setBagSearch] = useState("");
+  const [searchPlayer, setSearchPlayer] = useState("");
   const [stats, setStats] = useState({
     totalPlayers: 0,
     nextTraining: null as any,
     weeklyAttendance: 0,
-    lastMatch: null as any
+    lastMatch: null as any,
+    completedTrainingsCount: 0,
+    completedMatchesCount: 0
   });
 
   const [printData, setPrintData] = useState<any>(null);
@@ -52,6 +58,62 @@ export function CoachNotebook() {
     return themes.find(t => t.id === themeId) || themes[0];
   };
 
+  const extractBagNumber = (notes?: string) => {
+    if (!notes) return "";
+    const match = notes.match(/\[(?:رقم الحقيبة|رقم القطعة|رقم الحقيبة \/ القطعة):\s*([^\]]+)\]/i);
+    if (match) return match[1].trim();
+    const fallback = notes.match(/\[حقيبة:\s*([^\]]+)\]/i);
+    return fallback ? fallback[1].trim() : "";
+  };
+
+  const getPlayerBagNumber = (playerId: number, notes?: string) => {
+    const k = kits.find((item: any) => Number(item.player_id) === Number(playerId));
+    if (k) {
+      const bn = extractBagNumber(k.notes);
+      if (bn) return bn;
+    }
+    return extractBagNumber(notes) || "";
+  };
+
+  // Bag search result for quick inspection
+  const bagSearchResult = React.useMemo(() => {
+    const q = bagSearch.trim().toLowerCase();
+    if (!q) return null;
+
+    // Search in kits first
+    const matchedKit = kits.find((k: any) => {
+      const bn = extractBagNumber(k.notes).toLowerCase();
+      return bn === q;
+    });
+
+    if (matchedKit) {
+      const p = players.find((pl: any) => Number(pl.player_id) === Number(matchedKit.player_id));
+      if (p) {
+        return {
+          player: p,
+          bagNumber: extractBagNumber(matchedKit.notes),
+          kitStatus: matchedKit.status === 'delivered' ? 'مستلم' : 'قيد التجهيز'
+        };
+      }
+    }
+
+    // Search in players
+    const matchedPlayer = players.find((pl: any) => {
+      const bn = extractBagNumber(pl.notes).toLowerCase();
+      return bn === q || (pl.bag_number && String(pl.bag_number).toLowerCase() === q);
+    });
+
+    if (matchedPlayer) {
+      return {
+        player: matchedPlayer,
+        bagNumber: bagSearch.trim(),
+        kitStatus: 'مسجل'
+      };
+    }
+
+    return { notFound: true, query: bagSearch.trim() };
+  }, [bagSearch, kits, players]);
+
   useEffect(() => {
     loadData();
   }, [user]);
@@ -59,12 +121,14 @@ export function CoachNotebook() {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const [pData, tData, mData, aData] = await Promise.all([
+      const [pData, tData, mData, aData, kData] = await Promise.all([
         api.getPlayers(),
         api.getTrainings(),
         api.getMatches(),
-        api.getAttendance()
+        api.getAttendance(),
+        api.getKits().catch(() => [])
       ]);
+      setKits(kData || []);
 
       let filteredPlayers = pData;
       let filteredTrainings = tData;
@@ -131,11 +195,17 @@ export function CoachNotebook() {
       const totalCount = categoryAttendance.length || 1;
       const attRate = Math.round((presentCount / totalCount) * 100);
 
+      const todayStr = new Date().toISOString().split('T')[0];
+      const completedTrainings = filteredTrainings.filter((t: any) => (t.date || "").split('T')[0] <= todayStr);
+      const completedMatches = filteredMatches.filter((m: any) => (m.match_date || m.date || "").split('T')[0] <= todayStr);
+
       setStats({
         totalPlayers: filteredPlayers.length,
         nextTraining: nextT,
         weeklyAttendance: attRate,
-        lastMatch: lastM
+        lastMatch: lastM,
+        completedTrainingsCount: completedTrainings.length,
+        completedMatchesCount: completedMatches.length
       });
 
     } catch (e) {
@@ -266,6 +336,19 @@ export function CoachNotebook() {
           <p className="text-xs text-zinc-400 font-bold mb-1">نسبة الحضور</p>
           <p className="text-3xl font-black text-white">{stats.weeklyAttendance}%</p>
         </Card>
+
+        {/* Sessions & Matches counters */}
+        <Card className="bg-gradient-to-br from-zinc-900 to-zinc-900/80 border-zinc-800/80 p-4 rounded-3xl shadow-lg">
+          <Calendar className="text-cyan-400 h-6 w-6 mb-2" />
+          <p className="text-xs text-zinc-400 font-bold mb-1">الحصص المنجزة</p>
+          <p className="text-3xl font-black text-white">{stats.completedTrainingsCount}</p>
+        </Card>
+        <Card className="bg-gradient-to-br from-zinc-900 to-zinc-900/80 border-zinc-800/80 p-4 rounded-3xl shadow-lg">
+          <Trophy className="text-purple-400 h-6 w-6 mb-2" />
+          <p className="text-xs text-zinc-400 font-bold mb-1">مباريات ملعوبة</p>
+          <p className="text-3xl font-black text-white">{stats.completedMatchesCount}</p>
+        </Card>
+
         <Card className="bg-gradient-to-br from-zinc-900 to-zinc-900/80 border-zinc-800/80 p-4 col-span-2 rounded-3xl shadow-lg relative overflow-hidden">
           <div className="absolute -right-4 -top-4 w-24 h-24 bg-amber-500/5 rounded-full blur-2xl pointer-events-none" />
           <div className="flex justify-between items-center mb-3">
@@ -293,6 +376,83 @@ export function CoachNotebook() {
           )}
         </Card>
       </div>
+
+      {/* Bag Number Inspection Box (Read-Only) */}
+      <Card className="bg-zinc-900/60 border-zinc-800 p-4 rounded-3xl shadow-lg space-y-3">
+        <div className="flex justify-between items-center">
+          <div className="flex items-center gap-2">
+            <div className="h-8 w-8 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
+              <ShoppingBag className="h-4 w-4 text-amber-400" />
+            </div>
+            <div>
+              <h4 className="text-xs font-black text-zinc-100">استعلام برقم الحقيبة</h4>
+              <p className="text-[10px] text-zinc-500">كتابة رقم الحقيبة لمعاينة صاحبها (للقراءة فقط 🔒)</p>
+            </div>
+          </div>
+          <span className="text-[10px] bg-zinc-800 text-zinc-400 px-2.5 py-1 rounded-full font-bold">
+            للمعاينة فقط
+          </span>
+        </div>
+
+        <div className="relative">
+          <ShoppingBag className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-amber-500" />
+          <input
+            type="text"
+            value={bagSearch}
+            onChange={(e) => setBagSearch(e.target.value)}
+            placeholder="اكتب رقم الحقيبة هنا..."
+            className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pr-9 pl-8 py-2 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-amber-500"
+          />
+          {bagSearch && (
+            <button
+              onClick={() => setBagSearch("")}
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
+        {bagSearchResult && (
+          <div className="pt-1">
+            {bagSearchResult.player ? (
+              <div className="bg-emerald-950/20 border border-emerald-500/30 rounded-2xl p-3 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-xl bg-zinc-950 border border-emerald-500/30 overflow-hidden flex items-center justify-center shrink-0">
+                    {bagSearchResult.player.photo_url ? (
+                      <img src={bagSearchResult.player.photo_url} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <User className="h-5 w-5 text-emerald-500" />
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-xs font-black text-white flex items-center gap-1.5">
+                      {bagSearchResult.player.name}
+                      <span className="text-[9px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded font-bold">
+                        حقيبة #{bagSearchResult.bagNumber}
+                      </span>
+                    </p>
+                    <p className="text-[10px] text-zinc-400 mt-0.5">
+                      الفئة: {bagSearchResult.player.category} • المركز: {bagSearchResult.player.position || 'غير محدد'}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => handlePlayerClick(bagSearchResult.player)}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] h-8 px-3 rounded-xl"
+                >
+                  معاينة الملف 👁️
+                </Button>
+              </div>
+            ) : (
+              <div className="bg-rose-950/20 border border-rose-500/30 text-rose-400 text-xs p-2.5 rounded-xl text-center font-bold">
+                ❌ لا يوجد لاعب برقم الحقيبة «{bagSearchResult.query}» ضمن لاعبيك
+              </div>
+            )}
+          </div>
+        )}
+      </Card>
 
       {/* Quick Pitch Action Buttons (Optimized for Mobile) */}
       <div className="grid grid-cols-2 gap-3">
@@ -375,39 +535,69 @@ export function CoachNotebook() {
       </Card>
 
       <div className="space-y-4 pt-2">
-        <div className="flex justify-between items-center px-2">
-          <h3 className="text-sm font-black flex items-center gap-2 text-zinc-200">
-            <User size={18} className="text-blue-500" /> لاعبي الفئة
-          </h3>
-          <span className="text-[10px] bg-blue-500/10 text-blue-500 font-black px-3 py-1 rounded-full">
-            {players.length} لاعب
-          </span>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-2">
+          <div className="flex items-center gap-2">
+            <User size={18} className="text-blue-500" />
+            <h3 className="text-sm font-black text-zinc-200">لاعبي الفئة</h3>
+            <span className="text-[10px] bg-blue-500/10 text-blue-500 font-black px-3 py-1 rounded-full">
+              {players.length} لاعب
+            </span>
+          </div>
+
+          {/* Quick player search */}
+          <div className="relative w-full sm:w-60">
+            <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-500" />
+            <input
+              type="text"
+              value={searchPlayer}
+              onChange={(e) => setSearchPlayer(e.target.value)}
+              placeholder="تصفية بالاسم أو المركز..."
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pr-8 pl-7 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-blue-500"
+            />
+            {searchPlayer && (
+              <button
+                onClick={() => setSearchPlayer("")}
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
         </div>
+
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {players.map(p => (
-            <Card 
-              key={p.player_id} 
-              onClick={() => handlePlayerClick(p)}
-              className="bg-zinc-900/40 border-zinc-800/80 p-3 hover:bg-zinc-800/60 cursor-pointer group transition-all rounded-2xl flex items-center gap-4"
-            >
-              <div className="h-14 w-14 rounded-xl bg-zinc-950 flex-shrink-0 overflow-hidden border border-zinc-800 shadow-inner relative">
-                {p.photo_url ? 
-                  <img src={p.photo_url} className="h-full w-full object-cover" alt={p.name} /> 
-                  : <User className="h-full w-full p-3 text-zinc-700" />
-                }
-              </div>
-              <div className="flex-1 min-w-0">
-                <h4 className="text-sm font-black text-white truncate">{p.name}</h4>
-                <div className="flex items-center gap-3 mt-1">
-                  <p className="text-[10px] text-zinc-500 font-bold bg-zinc-950 px-2 py-0.5 rounded-md">{p.position || 'غير محدد'}</p>
-                  <p className="text-[10px] text-rose-500 font-bold">{p.blood_type || ''}</p>
+          {players.filter(p => !searchPlayer.trim() || p.name?.toLowerCase().includes(searchPlayer.toLowerCase()) || p.position?.toLowerCase().includes(searchPlayer.toLowerCase())).map(p => {
+            const bag = getPlayerBagNumber(p.player_id, p.notes);
+            return (
+              <Card 
+                key={p.player_id} 
+                onClick={() => handlePlayerClick(p)}
+                className="bg-zinc-900/40 border-zinc-800/80 p-3 hover:bg-zinc-800/60 cursor-pointer group transition-all rounded-2xl flex items-center gap-4"
+              >
+                <div className="h-14 w-14 rounded-xl bg-zinc-950 flex-shrink-0 overflow-hidden border border-zinc-800 shadow-inner relative">
+                  {p.photo_url ? 
+                    <img src={p.photo_url} className="h-full w-full object-cover" alt={p.name} /> 
+                    : <User className="h-full w-full p-3 text-zinc-700" />
+                  }
                 </div>
-              </div>
-              <div className="h-10 w-10 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center justify-center text-zinc-500 group-hover:bg-blue-500 group-hover:text-white group-hover:border-blue-500 transition-all shadow-sm">
-                <ChevronLeft size={20} />
-              </div>
-            </Card>
-          ))}
+                <div className="flex-1 min-w-0">
+                  <h4 className="text-sm font-black text-white truncate">{p.name}</h4>
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
+                    <p className="text-[10px] text-zinc-500 font-bold bg-zinc-950 px-2 py-0.5 rounded-md">{p.position || 'غير محدد'}</p>
+                    {p.blood_type && <p className="text-[10px] text-rose-500 font-bold">{p.blood_type}</p>}
+                    {bag && (
+                      <span className="text-[10px] text-amber-400 font-bold bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded flex items-center gap-1">
+                        <ShoppingBag className="h-2.5 w-2.5" /> #{bag}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="h-10 w-10 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center justify-center text-zinc-500 group-hover:bg-blue-500 group-hover:text-white group-hover:border-blue-500 transition-all shadow-sm">
+                  <ChevronLeft size={20} />
+                </div>
+              </Card>
+            );
+          })}
         </div>
       </div>
 
@@ -419,9 +609,17 @@ export function CoachNotebook() {
                </div>
                <div>
                   <h3 className="text-xl font-black text-white mb-1">{selectedPlayer?.name}</h3>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 items-center flex-wrap">
                     <span className="text-[10px] font-bold bg-blue-500/10 text-blue-500 px-2 py-1 rounded-md">{selectedPlayer?.category}</span>
                     <span className="text-[10px] font-bold bg-zinc-800 text-zinc-400 px-2 py-1 rounded-md">{selectedPlayer?.position || 'مركز غير محدد'}</span>
+                    {selectedPlayer && (() => {
+                      const bag = getPlayerBagNumber(selectedPlayer.player_id, selectedPlayer.notes);
+                      return bag ? (
+                        <span className="text-[10px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded-md flex items-center gap-1">
+                          <ShoppingBag className="h-3 w-3" /> حقيبة #{bag} 🔒
+                        </span>
+                      ) : null;
+                    })()}
                   </div>
                </div>
             </div>
