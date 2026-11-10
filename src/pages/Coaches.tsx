@@ -1,18 +1,21 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { 
   Plus, Search, User, Phone, Mail, Award, Users, Shield, 
   Loader2, Info, Star, Activity, Heart, Trash2, Edit, 
   CreditCard, LayoutGrid, List, Camera, Upload, Building,
-  CheckCircle, FileText
+  CheckCircle, FileText, TrendingUp, Dumbbell, Trophy, Filter
 } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { api } from "@/services/api";
+import { supabase } from "@/services/supabaseClient";
 import { PrintPortal } from "@/components/PrintPortal";
 import { exportToPDF, exportToPNG } from "@/lib/pdf-export";
 import { QRCodeSVG } from "qrcode.react";
+
+const MATCH_MULTIPLIERS: Record<string, number> = { friendly: 1, official: 1.5, cup: 2 };
 
 // Image compression helper to store compact base64 profile pictures in localStorage
 const compressImage = (base64Str: string): Promise<string> => {
@@ -49,11 +52,14 @@ export function Coaches() {
   const [coaches, setCoaches] = useState<any[]>([]);
   const [teams, setTeams] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
+  const [trainings, setTrainings] = useState<any[]>([]);
+  const [matches, setMatches] = useState<any[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [editingCoach, setEditingCoach] = useState<any>(null);
   const [coachToDelete, setCoachToDelete] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [filterRole, setFilterRole] = useState("all");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   
@@ -64,6 +70,12 @@ export function Coaches() {
   // Photo Upload States
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [photoBase64, setPhotoBase64] = useState<string>("");
+
+  // Current month prefix e.g. "2025-11"
+  const currentMonth = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }, []);
 
   useEffect(() => {
     loadData();
@@ -97,6 +109,28 @@ export function Coaches() {
       setCoaches(enriched);
     } catch (error) {
       console.error("Failed to load coaches list:", error);
+    }
+
+    // Load training sessions for current month
+    try {
+      const { data: tData } = await supabase
+        .from('training')
+        .select('*')
+        .like('date', `${currentMonth}%`);
+      setTrainings(tData || []);
+    } catch (e) {
+      console.error("Failed to load trainings:", e);
+    }
+
+    // Load matches for current month
+    try {
+      const { data: mData } = await supabase
+        .from('ems_matches')
+        .select('*')
+        .like('match_date', `${currentMonth}%`);
+      setMatches(mData || []);
+    } catch (e) {
+      console.error("Failed to load matches:", e);
     }
 
     try {
@@ -348,11 +382,62 @@ export function Coaches() {
     return coach.category || "غير محدد";
   };
 
-  const filteredCoaches = coaches.filter(c =>
-    (c.name || "").toLowerCase().includes((searchQuery || "").toLowerCase()) ||
-    (c.phone || "").includes(searchQuery) ||
-    (c.specialization || "").toLowerCase().includes((searchQuery || "").toLowerCase())
-  );
+  // Returns current-month session stats for a given coach
+  const getCoachMonthStats = (coach: any) => {
+    const coachId = Number(coach.coach_id);
+    const coachTeamIds = teams
+      .filter(tm => Number(tm.coach_id) === coachId)
+      .map(tm => Number(tm.team_id));
+    if (coach.team_id) coachTeamIds.push(Number(coach.team_id));
+
+    const coachTrainings = trainings.filter(t => {
+      if (t.coach_id && Number(t.coach_id) === coachId) return true;
+      if (!t.coach_id && t.team_id && coachTeamIds.includes(Number(t.team_id))) return true;
+      if (!t.coach_id && coach.category && t.category === coach.category) return true;
+      return false;
+    });
+
+    const coachMatches = matches.filter(m => {
+      if (m.coach_id && Number(m.coach_id) === coachId) return true;
+      if (m.team_id && coachTeamIds.includes(Number(m.team_id))) return true;
+      if (coach.category && m.category && m.category === coach.category) return true;
+      return false;
+    });
+
+    const matchEquivSessions = coachMatches.reduce((sum, m) => sum + (MATCH_MULTIPLIERS[m.match_type || 'official'] ?? 1), 0);
+    const totalSessions = coachTrainings.length + matchEquivSessions;
+    const rate = Number(coach.salary_per_session) || 1000;
+
+    return {
+      trainingCount: coachTrainings.length,
+      matchCount: coachMatches.length,
+      matchEquivSessions,
+      totalSessions,
+      monthlyAmount: totalSessions * rate,
+      rate,
+    };
+  };
+
+  // Global stats
+  const globalStats = useMemo(() => {
+    const totalCoaches = coaches.length;
+    const licensed = coaches.filter(c => c.license && c.license.trim()).length;
+    const specializations = new Set(coaches.map(c => c.specialization)).size;
+    const totalSessions = coaches.reduce((sum, c) => sum + getCoachMonthStats(c).totalSessions, 0);
+    const totalPending = coaches.reduce((sum, c) => sum + getCoachMonthStats(c).monthlyAmount, 0);
+    return { totalCoaches, licensed, specializations, totalSessions, totalPending };
+  }, [coaches, trainings, matches]);
+
+  const uniqueRoles = useMemo(() => Array.from(new Set(coaches.map(c => c.specialization))).sort(), [coaches]);
+
+  const filteredCoaches = coaches.filter(c => {
+    const matchesSearch =
+      (c.name || "").toLowerCase().includes((searchQuery || "").toLowerCase()) ||
+      (c.phone || "").includes(searchQuery) ||
+      (c.specialization || "").toLowerCase().includes((searchQuery || "").toLowerCase());
+    const matchesRole = filterRole === 'all' || c.specialization === filterRole;
+    return matchesSearch && matchesRole;
+  });
 
   return (
     <div className="space-y-6 font-tajawal text-right" dir="rtl">
@@ -368,35 +453,79 @@ export function Coaches() {
         </Button>
       </div>
 
+      {/* Stats Dashboard */}
+      {!isLoading && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="bg-gradient-to-br from-zinc-900 to-zinc-800/50 border border-zinc-700/50 rounded-xl p-3 flex flex-col items-center gap-1">
+            <Users className="h-5 w-5 text-emerald-400" />
+            <span className="text-2xl font-black text-zinc-50">{globalStats.totalCoaches}</span>
+            <span className="text-[11px] text-zinc-500 font-medium">إجمالي الأطر</span>
+          </div>
+          <div className="bg-gradient-to-br from-zinc-900 to-amber-950/20 border border-amber-700/20 rounded-xl p-3 flex flex-col items-center gap-1">
+            <Award className="h-5 w-5 text-amber-400" />
+            <span className="text-2xl font-black text-zinc-50">{globalStats.licensed}</span>
+            <span className="text-[11px] text-zinc-500 font-medium">مرخّصون</span>
+          </div>
+          <div className="bg-gradient-to-br from-zinc-900 to-purple-950/20 border border-purple-700/20 rounded-xl p-3 flex flex-col items-center gap-1">
+            <Star className="h-5 w-5 text-purple-400" />
+            <span className="text-2xl font-black text-zinc-50">{globalStats.specializations}</span>
+            <span className="text-[11px] text-zinc-500 font-medium">تخصصات</span>
+          </div>
+          <div className="bg-gradient-to-br from-zinc-900 to-cyan-950/20 border border-cyan-700/20 rounded-xl p-3 flex flex-col items-center gap-1">
+            <Activity className="h-5 w-5 text-cyan-400" />
+            <span className="text-2xl font-black text-zinc-50">{Math.round(globalStats.totalSessions)}</span>
+            <span className="text-[11px] text-zinc-500 font-medium">حصص الشهر</span>
+          </div>
+          <div className="col-span-2 sm:col-span-1 bg-gradient-to-br from-zinc-900 to-emerald-950/20 border border-emerald-700/20 rounded-xl p-3 flex flex-col items-center gap-1">
+            <TrendingUp className="h-5 w-5 text-emerald-400" />
+            <span className="text-xl font-black text-zinc-50">{globalStats.totalPending.toLocaleString()}</span>
+            <span className="text-[11px] text-zinc-500 font-medium">مستحقات (دج)</span>
+          </div>
+        </div>
+      )}
+
       {/* Filters Area */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-zinc-900/30 p-3 rounded-xl border border-zinc-800/50">
-        <div className="relative w-full sm:max-w-md">
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-zinc-900/30 p-3 rounded-xl border border-zinc-800/50">
+        <div className="relative w-full sm:max-w-xs">
           <Search className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
           <input
             type="text"
-            placeholder="بحث بالاسم، الهاتف، أو التخصص الفني..."
+            placeholder="بحث بالاسم، الهاتف، أو التخصص..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="h-10 w-full rounded-lg border border-zinc-800 bg-zinc-950 pr-10 pl-4 text-sm text-zinc-50 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
           />
         </div>
-        <div className="flex items-center gap-1.5 self-end sm:self-auto">
-          <Button 
-            variant="outline" 
-            size="icon" 
-            onClick={() => setViewMode('grid')}
-            className={`h-9 w-9 border-zinc-800 ${viewMode === 'grid' ? 'bg-emerald-600/10 text-emerald-500 border-emerald-500/30' : 'text-zinc-400 hover:text-zinc-200'}`}
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <Filter className="h-4 w-4 text-zinc-500 flex-shrink-0" />
+          <select
+            value={filterRole}
+            onChange={(e) => setFilterRole(e.target.value)}
+            className="h-10 flex-1 sm:w-48 rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-200 focus:border-emerald-500 focus:outline-none"
           >
-            <LayoutGrid className="h-4 w-4" />
-          </Button>
-          <Button 
-            variant="outline" 
-            size="icon" 
-            onClick={() => setViewMode('table')}
-            className={`h-9 w-9 border-zinc-800 ${viewMode === 'table' ? 'bg-emerald-600/10 text-emerald-500 border-emerald-500/30' : 'text-zinc-400 hover:text-zinc-200'}`}
-          >
-            <List className="h-4 w-4" />
-          </Button>
+            <option value="all">جميع التخصصات</option>
+            {uniqueRoles.map(role => (
+              <option key={role} value={role}>{role}</option>
+            ))}
+          </select>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <Button 
+              variant="outline" 
+              size="icon" 
+              onClick={() => setViewMode('grid')}
+              className={`h-9 w-9 border-zinc-800 ${viewMode === 'grid' ? 'bg-emerald-600/10 text-emerald-500 border-emerald-500/30' : 'text-zinc-400 hover:text-zinc-200'}`}
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </Button>
+            <Button 
+              variant="outline" 
+              size="icon" 
+              onClick={() => setViewMode('table')}
+              className={`h-9 w-9 border-zinc-800 ${viewMode === 'table' ? 'bg-emerald-600/10 text-emerald-500 border-emerald-500/30' : 'text-zinc-400 hover:text-zinc-200'}`}
+            >
+              <List className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
       </div>
 
