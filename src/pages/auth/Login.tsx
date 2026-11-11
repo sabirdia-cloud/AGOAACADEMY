@@ -60,7 +60,13 @@ export function Login() {
         }
 
         login(user);
-        navigate(user.role === 'parent' ? '/parent-dashboard' : '/dashboard');
+        if (user.role === 'parent') {
+          navigate('/parent-dashboard');
+        } else if (user.role === 'coach') {
+          navigate('/academy/notebook');
+        } else {
+          navigate('/dashboard');
+        }
       } else {
         setError('بيانات الدخول غير صحيحة. يرجى التحقق والمحاولة مرة أخرى.');
       }

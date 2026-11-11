@@ -59,6 +59,10 @@ export function Dashboard() {
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
 
   useEffect(() => {
+    if (user?.role === 'coach') {
+      navigate('/academy/notebook', { replace: true });
+      return;
+    }
     loadDashboardData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);

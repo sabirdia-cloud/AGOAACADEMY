@@ -93,7 +93,7 @@ export function LandingPage() {
                     </div>
                     {user && (
                         <Button 
-                            onClick={() => navigate(user.role === 'parent' ? '/parent-dashboard' : '/dashboard')}
+                            onClick={() => navigate(user.role === 'parent' ? '/parent-dashboard' : (user.role === 'coach' ? '/academy/notebook' : '/dashboard'))}
                             className="bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl h-12 px-6 shadow-xl shadow-emerald-950/20"
                         >
                             لوحة التحكم
