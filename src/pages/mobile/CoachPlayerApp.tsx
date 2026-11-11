@@ -4037,11 +4037,12 @@ export function CoachPlayerApp() {
         } catch { }
       }
 
-      const myMatches = allMatchesList.filter((m: any) =>
-        (m.team_id && myTeamIds.includes(Number(m.team_id))) ||
-        (m.category && myCategories.includes(m.category)) ||
-        (coachId && Number(m.coach_id) === Number(coachId))
-      );
+      const myMatches = allMatchesList.filter((m: any) => {
+        if (coachId && Number(m.coach_id) === Number(coachId)) return true;
+        if (myTeamIds.length > 0 && m.team_id && myTeamIds.includes(Number(m.team_id))) return true;
+        if (myTeamIds.length === 0 && !m.coach_id && !m.team_id && coachCategory && m.category === coachCategory) return true;
+        return false;
+      });
       setMatches(myMatches);
 
       // 5. Fetch kits for bag lookup
