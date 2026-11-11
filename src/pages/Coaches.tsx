@@ -245,6 +245,15 @@ export function Coaches() {
         } else if (!photoPreview) {
           localStorage.removeItem(`coach_photo_${targetId}`);
         }
+
+        // Sync with teams table so the specific squad/team points to this coach
+        if (selectedTeamId) {
+          try {
+            await supabase.from('teams').update({ coach_id: targetId }).eq('team_id', selectedTeamId);
+          } catch (te) {
+            console.warn("Could not sync team coach_id:", te);
+          }
+        }
       }
 
       await loadData();
@@ -409,11 +418,15 @@ export function Coaches() {
   };
 
   const getTeamName = (coach: any) => {
-    if (coach.team_id) {
-      const team = teams.find(t => t.team_id === coach.team_id);
-      return team ? `${team.category} - ${team.team_name}` : coach.category || "غير محدد";
+    const coachId = Number(coach.coach_id);
+    let team = coach.team_id ? teams.find(t => t.team_id === coach.team_id) : null;
+    if (!team) {
+      team = teams.find(t => Number(t.coach_id) === coachId);
     }
-    return coach.category || "غير محدد";
+    if (team) {
+      return `فئة ${team.category} (${team.team_name})`;
+    }
+    return coach.category ? `فئة ${coach.category}` : "غير محدد";
   };
 
   // Returns session stats and records for a given coach for the selected month
@@ -422,19 +435,21 @@ export function Coaches() {
     const coachTeamIds = teams
       .filter(tm => Number(tm.coach_id) === coachId)
       .map(tm => Number(tm.team_id));
-    if (coach.team_id) coachTeamIds.push(Number(coach.team_id));
+    if (coach.team_id && !coachTeamIds.includes(Number(coach.team_id))) {
+      coachTeamIds.push(Number(coach.team_id));
+    }
 
     const coachTrainings = trainings.filter(t => {
       if (t.coach_id && Number(t.coach_id) === coachId) return true;
-      if (!t.coach_id && t.team_id && coachTeamIds.includes(Number(t.team_id))) return true;
-      if (!t.coach_id && coach.category && t.category === coach.category) return true;
+      if (t.team_id && coachTeamIds.includes(Number(t.team_id))) return true;
+      if (!t.coach_id && !t.team_id && coachTeamIds.length === 0 && coach.category && t.category === coach.category) return true;
       return false;
     });
 
     const coachMatches = matches.filter(m => {
       if (m.coach_id && Number(m.coach_id) === coachId) return true;
       if (m.team_id && coachTeamIds.includes(Number(m.team_id))) return true;
-      if (coach.category && m.category && m.category === coach.category) return true;
+      if (!m.coach_id && !m.team_id && coachTeamIds.length === 0 && coach.category && m.category === coach.category) return true;
       return false;
     });
 
@@ -454,14 +469,25 @@ export function Coaches() {
     };
   };
 
-  // Returns players assigned to the coach's category or team
+  // Returns players assigned STRICTLY to the coach's specific team/squad (فوج)
   const getCoachPlayers = (coach: any) => {
     if (!coach) return [];
-    return players.filter(p => {
-      if (coach.team_id && Number(p.team_id) === Number(coach.team_id)) return true;
-      if (coach.category && p.category === coach.category) return true;
-      return false;
-    });
+    const coachId = Number(coach.coach_id);
+    const coachTeamIds = teams
+      .filter(tm => Number(tm.coach_id) === coachId)
+      .map(tm => Number(tm.team_id));
+    if (coach.team_id && !coachTeamIds.includes(Number(coach.team_id))) {
+      coachTeamIds.push(Number(coach.team_id));
+    }
+
+    if (coachTeamIds.length > 0) {
+      // STRICT RULE: Only players of this coach's specific squad (e.g. فوج A)
+      return players.filter(p => p.team_id && coachTeamIds.includes(Number(p.team_id)));
+    }
+    if (coach.category) {
+      return players.filter(p => p.category === coach.category && !p.team_id);
+    }
+    return [];
   };
 
   // Helper to extract bag number from player notes or kits

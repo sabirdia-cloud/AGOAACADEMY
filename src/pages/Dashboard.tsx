@@ -125,26 +125,37 @@ export function Dashboard() {
       const topPlayer = players.find((p: any) => p.player_id === topPlayerId);
 
       if (user?.role === 'coach' && user.coach_id) {
-        // Find assigned teams: by coach_id OR by category
-        const coachTeams = teamsData.filter(t =>
-          Number(t.coach_id) === Number(user.coach_id) ||
-          (user.category && t.category === user.category)
+        // STRICT MATCHING: Find teams explicitly assigned to this coach (فوج المدرب فقط)
+        let coachTeams = teamsData.filter(t =>
+          (user.coach_id && Number(t.coach_id) === Number(user.coach_id)) ||
+          (user.team_id && Number(t.team_id) === Number(user.team_id))
         );
+        if (coachTeams.length === 0 && user.category) {
+          coachTeams = teamsData.filter(t => t.category === user.category && (!t.coach_id || Number(t.coach_id) === Number(user.coach_id)));
+        }
         const coachTeamIds = coachTeams.map(t => Number(t.team_id));
-        const coachCategoriesList = coachTeams.map(t => t.category);
-        if (user.category) coachCategoriesList.push(user.category);
-        const uniqueCoachCats = Array.from(new Set(coachCategoriesList.filter(Boolean)));
 
-        const filteredPlayers = players.filter(p =>
-          coachTeamIds.includes(Number(p.team_id)) ||
-          (user.category && p.category === user.category)
-        );
+        // STRICT PLAYERS: Only players in this coach's specific team/squad (الفوج)
+        const filteredPlayers = players.filter(p => {
+          if (coachTeamIds.length > 0) {
+            return p.team_id && coachTeamIds.includes(Number(p.team_id));
+          }
+          if (user.category) {
+            return p.category === user.category && !p.team_id;
+          }
+          return false;
+        });
         const filteredPlayerIds = filteredPlayers.map(p => p.player_id);
-        const filteredTrainings = trainings.filter(t => coachTeamIds.includes(Number(t.team_id)));
-        const filteredMatches = matches.filter(m =>
-          coachTeamIds.includes(Number(m.team_id)) ||
-          uniqueCoachCats.includes(m.category)
-        );
+        const filteredTrainings = trainings.filter(t => {
+          if (t.coach_id && Number(t.coach_id) === Number(user.coach_id)) return true;
+          if (coachTeamIds.length > 0 && t.team_id && coachTeamIds.includes(Number(t.team_id))) return true;
+          return false;
+        });
+        const filteredMatches = matches.filter(m => {
+          if (m.coach_id && Number(m.coach_id) === Number(user.coach_id)) return true;
+          if (coachTeamIds.length > 0 && m.team_id && coachTeamIds.includes(Number(m.team_id))) return true;
+          return false;
+        });
 
         setStats({
           ...stats,

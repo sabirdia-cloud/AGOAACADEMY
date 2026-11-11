@@ -155,16 +155,18 @@ export function CoachPayroll() {
         const coachTeamIds = (teams || [])
             .filter(tm => Number(tm.coach_id) === coachId)
             .map(tm => Number(tm.team_id));
-        if (coach.team_id) coachTeamIds.push(Number(coach.team_id));
-        const categoryTeamIds = (teams || [])
-            .filter(tm => coach.category && tm.category === coach.category)
-            .map(tm => Number(tm.team_id));
+        if (coach.team_id && !coachTeamIds.includes(Number(coach.team_id))) {
+            coachTeamIds.push(Number(coach.team_id));
+        }
 
         return (trainings || []).filter(t => {
             if (!t.date || !isDateInPeriod(t.date)) return false;
+            // Explicit coach_id match
             if (t.coach_id && Number(t.coach_id) === coachId) return true;
-            if (!t.coach_id && t.team_id && coachTeamIds.includes(Number(t.team_id))) return true;
-            if (!t.coach_id && t.team_id && categoryTeamIds.includes(Number(t.team_id))) return true;
+            // Explicit team/squad match (الفوج الموكل)
+            if (t.team_id && coachTeamIds.includes(Number(t.team_id))) return true;
+            // Fallback only if neither coach nor team is set
+            if (!t.coach_id && !t.team_id && coachTeamIds.length === 0 && coach.category && t.category === coach.category) return true;
             return false;
         }).map(t => {
             const tm = (teams || []).find(team => Number(team.team_id) === Number(t.team_id));
@@ -183,6 +185,9 @@ export function CoachPayroll() {
         const coachTeamIds = (teams || [])
             .filter(tm => Number(tm.coach_id) === coachId)
             .map(tm => Number(tm.team_id));
+        if (coach.team_id && !coachTeamIds.includes(Number(coach.team_id))) {
+            coachTeamIds.push(Number(coach.team_id));
+        }
         const coachCategory = coach.category;
 
         return (matches || []).filter(m => {
@@ -190,10 +195,10 @@ export function CoachPayroll() {
             if (!matchDate || !isDateInPeriod(matchDate)) return false;
             // Direct coach assignment
             if (m.coach_id && Number(m.coach_id) === coachId) return true;
-            // Team assignment
+            // Explicit team/squad assignment (الفوج الموكل)
             if (m.team_id && coachTeamIds.includes(Number(m.team_id))) return true;
-            // Category match
-            if (coachCategory && m.category && m.category === coachCategory) return true;
+            // Fallback only if no specific team is assigned
+            if (!m.coach_id && !m.team_id && coachTeamIds.length === 0 && coachCategory && m.category === coachCategory) return true;
             return false;
         }).map(m => {
             const matchType = m.match_type || 'official';

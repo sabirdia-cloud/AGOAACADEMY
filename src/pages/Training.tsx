@@ -107,13 +107,19 @@ export function Training() {
     try { coachesData = await api.getCoaches(); setCoaches(coachesData); } catch (e) { console.error('coaches:', e); }
 
     if (user?.role === 'coach' && user.coach_id) {
-      const coachTeams = teamsData.filter(t =>
-        Number(t.coach_id) === Number(user.coach_id) ||
-        (user.category && t.category === user.category)
+      let coachTeams = teamsData.filter(t =>
+        (user.coach_id && Number(t.coach_id) === Number(user.coach_id)) ||
+        (user.team_id && Number(t.team_id) === Number(user.team_id))
       );
+      if (coachTeams.length === 0 && user.category) {
+        coachTeams = teamsData.filter(t => t.category === user.category && (!t.coach_id || Number(t.coach_id) === Number(user.coach_id)));
+      }
       const coachTeamIds = coachTeams.map(t => Number(t.team_id));
 
-      setSessions(sessionsData.filter(s => coachTeamIds.includes(Number(s.team_id)) || Number(s.coach_id) === Number(user.coach_id)));
+      setSessions(sessionsData.filter(s => 
+        (Number(s.coach_id) === Number(user.coach_id)) ||
+        (coachTeamIds.length > 0 && s.team_id && coachTeamIds.includes(Number(s.team_id)))
+      ));
       setTeams(coachTeams);
 
       const coachCategories = categoriesData.filter(c =>

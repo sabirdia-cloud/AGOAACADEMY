@@ -3125,11 +3125,12 @@ function MatchesScreen({ coachData, user, coachTeams }: any) {
         const coachCat = coachData?.category || user?.category;
         const myTeamIds = (coachTeams || []).map((t: any) => Number(t.team_id));
 
-        const myMatches = allMatchesList.filter((m: any) =>
-          (m.team_id && myTeamIds.includes(Number(m.team_id))) ||
-          (coachCat && m.category === coachCat) ||
-          (coachId && Number(m.coach_id) === Number(coachId))
-        );
+        const myMatches = allMatchesList.filter((m: any) => {
+          if (coachId && Number(m.coach_id) === Number(coachId)) return true;
+          if (myTeamIds.length > 0 && m.team_id && myTeamIds.includes(Number(m.team_id))) return true;
+          if (myTeamIds.length === 0 && !m.coach_id && !m.team_id && coachCat && m.category === coachCat) return true;
+          return false;
+        });
         setMatches(myMatches);
       } catch { }
       setIsLoading(false);
@@ -3965,53 +3966,61 @@ export function CoachPlayerApp() {
 
       // 1. Fetch teams strictly belonging to this coach
       const { data: teamsData } = await supabase.from("teams").select("*");
-      const matchedTeams = (teamsData || []).filter((t: any) =>
+      const allTeams = teamsData || [];
+
+      // STRICT MATCHING: Find teams explicitly assigned to this coach
+      let matchedTeams = allTeams.filter((t: any) =>
         (coachId && Number(t.coach_id) === Number(coachId)) ||
-        (coachTeamId && Number(t.team_id) === Number(coachTeamId)) ||
-        (coachCategory && t.category === coachCategory)
+        (coachTeamId && Number(t.team_id) === Number(coachTeamId))
       );
+
+      // Fallback only if no team is assigned to this coach at all
+      if (matchedTeams.length === 0 && coachCategory) {
+        const catTeams = allTeams.filter((t: any) => t.category === coachCategory);
+        const unassigned = catTeams.filter((t: any) => !t.coach_id || Number(t.coach_id) === Number(coachId));
+        if (unassigned.length > 0) {
+          matchedTeams = [unassigned[0]];
+        }
+      }
 
       setCoachTeams(matchedTeams);
       const activeTeam = matchedTeams.length > 0 ? matchedTeams[0] : null;
       setSelectedTeam(activeTeam);
 
       const myTeamIds = matchedTeams.map((t: any) => Number(t.team_id));
-      const myCategories = Array.from(new Set([
-        ...matchedTeams.map((t: any) => t.category),
-        ...(coachCategory ? [coachCategory] : [])
-      ].filter(Boolean)));
 
-      // 2. Fetch players STRICTLY FOR THIS COACH'S TEAM & CATEGORY
+      // 2. Fetch players STRICTLY FOR THIS COACH'S TEAM
       const { data: allPlayers } = await supabase
         .from("players")
         .select("*")
         .not("name", "ilike", "[REQ]%");
 
       const myPlayers = (allPlayers || []).filter((p: any) => {
-        // If player has a team_id and coach has assigned teams, strictly match team_id!
-        if (p.team_id && myTeamIds.length > 0) {
-          return myTeamIds.includes(Number(p.team_id));
+        // If coach has an assigned team (e.g. فوج A), strictly show ONLY players of that team!
+        if (myTeamIds.length > 0) {
+          return p.team_id && myTeamIds.includes(Number(p.team_id));
         }
-        // Otherwise match category
-        if (p.category && myCategories.length > 0) {
-          return myCategories.includes(p.category);
+        // Fallback only if no teams exist at all in category
+        if (coachCategory) {
+          return p.category === coachCategory && !p.team_id;
         }
         return false;
       });
       setPlayers(myPlayers);
 
-      // 3. Fetch trainings strictly for this coach's team and category
+      // 3. Fetch trainings strictly for this coach's team
       const { data: allTrainings } = await supabase
         .from("training")
         .select("*")
         .order("date", { ascending: false })
         .limit(60);
 
-      const myTrainings = (allTrainings || []).filter((t: any) =>
-        (t.team_id && myTeamIds.includes(Number(t.team_id))) ||
-        (t.category && myCategories.includes(t.category)) ||
-        (coachId && Number(t.coach_id) === Number(coachId))
-      );
+      const myTrainings = (allTrainings || []).filter((t: any) => {
+        if (coachId && Number(t.coach_id) === Number(coachId)) return true;
+        if (myTeamIds.length > 0 && t.team_id && myTeamIds.includes(Number(t.team_id))) return true;
+        if (myTeamIds.length === 0 && !t.coach_id && !t.team_id && coachCategory && t.category === coachCategory) return true;
+        return false;
+      });
       setTrainings(myTrainings);
 
       // 4. Fetch matches strictly for this coach's team and category

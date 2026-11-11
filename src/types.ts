@@ -1,6 +1,7 @@
 export type UserRole = 'admin' | 'coach' | 'parent' | 'staff_storekeeper' | 'staff_doctor' | 'staff_assistant';
 
 export interface User {
+  name?: string;
   id: string;
   username: string;
   role: UserRole;

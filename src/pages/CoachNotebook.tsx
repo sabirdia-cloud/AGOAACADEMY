@@ -32,6 +32,7 @@ export function CoachNotebook() {
   const [players, setPlayers] = useState<any[]>([]);
   const [kits, setKits] = useState<any[]>([]);
   const [coachProfile, setCoachProfile] = useState<any>(null);
+  const [assignedTeams, setAssignedTeams] = useState<any[]>([]);
   const [allCoachTrainings, setAllCoachTrainings] = useState<any[]>([]);
   const [allCoachMatches, setAllCoachMatches] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -166,6 +167,7 @@ export function CoachNotebook() {
       let filteredPlayers = pData || [];
       let filteredTrainings = tData || [];
       let filteredMatches = mData || [];
+      let resolvedCoachTeams: any[] = [];
 
       if (user?.role === 'coach') {
         const coachId = user.coach_id || currentCoach?.coach_id;
@@ -173,40 +175,59 @@ export function CoachNotebook() {
         const coachTeamId = user.team_id || currentCoach?.team_id;
 
         const { data: teamsData } = await supabase.from('teams').select('*');
-        const coachTeams = (teamsData || []).filter((t: any) => 
+        const allTeams = teamsData || [];
+
+        // STRICT MATCHING: Find teams explicitly assigned to this coach (by coach_id or team_id)
+        resolvedCoachTeams = allTeams.filter((t: any) => 
           (coachId && Number(t.coach_id) === Number(coachId)) || 
-          (coachTeamId && Number(t.team_id) === Number(coachTeamId)) ||
-          (coachCategory && t.category === coachCategory)
+          (coachTeamId && Number(t.team_id) === Number(coachTeamId))
         );
-        const coachTeamIds = coachTeams.map((t: any) => Number(t.team_id));
-        const coachCategories = Array.from(new Set(coachTeams.map((t: any) => t.category).concat(coachCategory ? [coachCategory] : [])));
+
+        // Fallback only if no team is assigned to this coach at all:
+        // check if there's a team in their category that has no coach assigned
+        if (resolvedCoachTeams.length === 0 && coachCategory) {
+          const categoryTeams = allTeams.filter((t: any) => t.category === coachCategory);
+          const unassigned = categoryTeams.filter((t: any) => !t.coach_id || Number(t.coach_id) === Number(coachId));
+          if (unassigned.length > 0) {
+            resolvedCoachTeams = [unassigned[0]];
+          }
+        }
+
+        setAssignedTeams(resolvedCoachTeams);
+        const coachTeamIds = resolvedCoachTeams.map((t: any) => Number(t.team_id));
 
         if (coachTeamIds.length > 0) {
+          // STRICT RULE: Only players belonging to this coach's specific team/squad (الفوج الموكل)!
+          // Never mix with other teams/squads of the same category!
           filteredPlayers = (pData || []).filter((p: any) => 
-            coachTeamIds.includes(Number(p.team_id)) || 
-            (!p.team_id && p.category && coachCategories.includes(p.category))
+            p.team_id && coachTeamIds.includes(Number(p.team_id))
+          );
+
+          // STRICT RULE: Only trainings for this coach or this coach's specific team/squad!
+          filteredTrainings = (tData || []).filter((t: any) => {
+            if (t.coach_id && Number(t.coach_id) === Number(coachId)) return true;
+            if (t.team_id && coachTeamIds.includes(Number(t.team_id))) return true;
+            return false;
+          });
+
+          // STRICT RULE: Only matches for this coach or this coach's specific team/squad!
+          filteredMatches = (mData || []).filter((m: any) => {
+            if (m.coach_id && Number(m.coach_id) === Number(coachId)) return true;
+            if (m.team_id && coachTeamIds.includes(Number(m.team_id))) return true;
+            return false;
+          });
+        } else if (coachCategory) {
+          // Fallback only if category has no teams at all: unassigned players of this category
+          filteredPlayers = (pData || []).filter((p: any) => 
+            p.category === coachCategory && !p.team_id
           );
           filteredTrainings = (tData || []).filter((t: any) => 
-            coachTeamIds.includes(Number(t.team_id)) || 
-            (!t.team_id && t.category && coachCategories.includes(t.category)) ||
-            (coachId && Number(t.coach_id) === Number(coachId))
+            (t.coach_id && Number(t.coach_id) === Number(coachId)) ||
+            (!t.coach_id && !t.team_id && t.category === coachCategory)
           );
           filteredMatches = (mData || []).filter((m: any) => 
-            coachTeamIds.includes(Number(m.team_id)) || 
-            (!m.team_id && m.category && coachCategories.includes(m.category)) ||
-            (coachId && Number(m.coach_id) === Number(coachId))
-          );
-        } else {
-          filteredPlayers = (pData || []).filter((p: any) => 
-            p.category && coachCategories.includes(p.category)
-          );
-          filteredTrainings = (tData || []).filter((t: any) => 
-            (t.category && coachCategories.includes(t.category)) ||
-            (coachId && Number(t.coach_id) === Number(coachId))
-          );
-          filteredMatches = (mData || []).filter((m: any) => 
-            (m.category && coachCategories.includes(m.category)) ||
-            (coachId && Number(m.coach_id) === Number(coachId))
+            (m.coach_id && Number(m.coach_id) === Number(coachId)) ||
+            (!m.coach_id && !m.team_id && m.category === coachCategory)
           );
         }
       }
@@ -400,7 +421,9 @@ export function CoachNotebook() {
                   👑 {coachProfile?.specialization || 'طاقم فني وتدريبي'}
                 </span>
                 <span className="bg-amber-500/15 text-amber-400 border border-amber-500/30 text-xs px-2.5 py-0.5 rounded-full font-bold">
-                  فئة {coachProfile?.category || user?.category || 'غير محدد'}
+                  {assignedTeams.length > 0 
+                    ? assignedTeams.map(t => `فئة ${t.category} (${t.team_name})`).join(" • ")
+                    : `فئة ${coachProfile?.category || user?.category || 'غير محدد'}`}
                 </span>
                 {coachProfile?.license && (
                   <span className="bg-zinc-800 text-zinc-300 border border-zinc-700 text-[11px] px-2.5 py-0.5 rounded-full font-mono">

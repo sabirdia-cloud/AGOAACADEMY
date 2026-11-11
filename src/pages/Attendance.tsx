@@ -596,11 +596,16 @@ export function Attendance() {
       setAcademySettings(settingsData);
 
       if (user?.role === 'coach' && user?.coach_id) {
-        // Find assigned teams: by coach_id OR by category
-        const coachTeams = (teamsData || []).filter((t: any) =>
+        // STRICT MATCHING: Find teams explicitly assigned to this coach (فوج المدرب فقط)
+        let coachTeams = (teamsData || []).filter((t: any) =>
           Number(t.coach_id) === Number(user.coach_id) ||
-          (user.category && t.category === user.category)
+          (user.team_id && Number(t.team_id) === Number(user.team_id))
         );
+        if (coachTeams.length === 0 && user.category) {
+          coachTeams = (teamsData || []).filter((t: any) =>
+            t.category === user.category && (!t.coach_id || Number(t.coach_id) === Number(user.coach_id))
+          );
+        }
         const coachTeamIds = coachTeams.map((t: any) => Number(t.team_id));
 
         if (coachTeamIds.length === 0) {
@@ -608,9 +613,9 @@ export function Attendance() {
           setTrainings([]);
           setAttendance([]);
         } else {
+          // STRICT PLAYERS: Only players in this coach's specific team/squad (فوج)
           const filteredPlayers = (playersData || []).filter((p: any) =>
-            coachTeamIds.includes(Number(p.team_id)) ||
-            (user.category && p.category === user.category)
+            p.team_id && coachTeamIds.includes(Number(p.team_id))
           );
           const filteredPlayerIds = filteredPlayers.map((p: any) => Number(p.player_id));
 
