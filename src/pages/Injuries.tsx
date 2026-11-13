@@ -19,6 +19,8 @@ export function Injuries() {
   const [editingInjury, setEditingInjury] = useState<any>(null);
   const [injuryToDelete, setInjuryToDelete] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [isQrScannerOpen, setIsQrScannerOpen] = useState(false);
   const [categories, setCategories] = useState<any[]>([]);
@@ -39,11 +41,13 @@ export function Injuries() {
     try { playersData = await api.getPlayers(); } catch (e) { console.error('players:', e); }
     try { catsData = await api.getCategories(); setCategories(catsData); } catch (e) { console.error('categories:', e); }
 
-    if (user?.role === 'coach' && user.coach_id) {
-      // Find assigned teams: by coach_id OR by category
+    const coachId = user?.coach_id || (typeof user?.id === 'string' && user.id.startsWith('coach-') ? parseInt(user.id.split('-')[1]) : null);
+
+    if (user?.role === 'coach' && (coachId || user?.category)) {
+      // Find assigned teams strictly
       const coachTeams = teamsData.filter(t =>
-        Number(t.coach_id) === Number(user.coach_id) ||
-        (user.category && t.category === user.category)
+        (coachId && Number(t.coach_id) === Number(coachId)) ||
+        (!t.coach_id && user.category && t.category === user.category)
       );
       const coachTeamIds = coachTeams.map(t => Number(t.team_id));
       const coachCategoriesList = coachTeams.map(t => t.category);
@@ -51,8 +55,8 @@ export function Injuries() {
       const uniqueCoachCats = Array.from(new Set(coachCategoriesList.filter(Boolean)));
 
       const coachPlayers = playersData.filter(p =>
-        coachTeamIds.includes(Number(p.team_id)) ||
-        (user.category && p.category === user.category)
+        (coachTeamIds.length > 0 && coachTeamIds.includes(Number(p.team_id))) ||
+        (coachTeamIds.length === 0 && user.category && p.category === user.category)
       );
       const coachPlayerIds = coachPlayers.map(p => Number(p.player_id));
 
@@ -71,18 +75,39 @@ export function Injuries() {
 
   const handleAddInjury = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    const injuryData = {
-      player_id: Number(formData.get("player_id")),
-      injury_type: formData.get("injury_type") as string,
-      severity: formData.get("severity") as string,
-      date_occurred: formData.get("date_occurred") as string,
-      expected_recovery: formData.get("expected_recovery") as string,
-      status: editingInjury ? editingInjury.status : "قيد العلاج",
-      notes: formData.get("notes") as string,
-    };
+    setSubmitError(null);
+    setIsSubmitting(true);
 
     try {
+      const formData = new FormData(e.currentTarget);
+      const playerId = Number(formData.get("player_id"));
+      if (!playerId) {
+        setSubmitError("يرجى اختيار اللاعب");
+        setIsSubmitting(false);
+        return;
+      }
+      const injuryType = (formData.get("injury_type") as string)?.trim();
+      if (!injuryType) {
+        setSubmitError("يرجى إدخال نوع الفحص أو الإصابة");
+        setIsSubmitting(false);
+        return;
+      }
+
+      const expDate = formData.get("expected_recovery") as string;
+      const injuryData: any = {
+        player_id: playerId,
+        injury_type: injuryType,
+        severity: (formData.get("severity") as string) || "خفيفة",
+        date_occurred: (formData.get("date_occurred") as string) || new Date().toISOString().split("T")[0],
+        status: editingInjury ? editingInjury.status : "قيد العلاج",
+        notes: (formData.get("notes") as string) || "",
+      };
+
+      if (expDate) {
+        injuryData.expected_recovery = expDate;
+        injuryData.expected_return = expDate;
+      }
+
       if (editingInjury) {
         await api.updateInjury(editingInjury.injury_id, injuryData);
       } else {
@@ -91,8 +116,11 @@ export function Injuries() {
       await loadData();
       setIsModalOpen(false);
       setEditingInjury(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to save injury:", error);
+      setSubmitError(error?.message || "تعذر حفظ المعاينة الطبية، يرجى إعادة المحاولة.");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -196,7 +224,7 @@ export function Injuries() {
                   <div className="flex items-start gap-2">
                     <AlertCircle className="h-4 w-4 text-zinc-500 mt-0.5" />
                     <div>
-                      <p className="text-xs font-medium text-zinc-400">تاريخ الإصابة</p>
+                      <p className="text-xs font-medium text-zinc-400">تاريخ الإصابة / المعاينة</p>
                       <p className="text-sm text-zinc-300">{injury.date_occurred}</p>
                     </div>
                   </div>
@@ -204,14 +232,14 @@ export function Injuries() {
                     <Calendar className="h-4 w-4 text-emerald-500 mt-0.5" />
                     <div>
                       <p className="text-xs font-medium text-zinc-400">التعافي المتوقع</p>
-                      <p className="text-sm text-zinc-300">{injury.expected_recovery}</p>
+                      <p className="text-sm text-zinc-300">{injury.expected_recovery || injury.expected_return || "غير محدد"}</p>
                     </div>
                   </div>
                 </div>
 
                 <div className="bg-zinc-950/50 p-3 rounded-md border border-zinc-800/50">
                   <p className="text-xs font-medium text-zinc-400 mb-1">ملاحظات طبية:</p>
-                  <p className="text-sm text-zinc-300 leading-relaxed">{injury.notes}</p>
+                  <p className="text-sm text-zinc-300 leading-relaxed">{injury.notes || "لا توجد ملاحظات إضافية"}</p>
                 </div>
 
                 {(isCoach || isDoctor) && (
@@ -230,16 +258,22 @@ export function Injuries() {
         ))}
       </div>
 
-      <Modal isOpen={isModalOpen} onClose={() => { setIsModalOpen(false); setEditingInjury(null); }} title={editingInjury ? "تعديل بيانات الإصابة" : "تسجيل إصابة جديدة"}>
+      <Modal isOpen={isModalOpen} onClose={() => { setIsModalOpen(false); setEditingInjury(null); setSubmitError(null); }} title={editingInjury ? "تعديل المعاينة الطبية" : "تسجيل فحص طبي / إصابة جديدة"}>
         <form onSubmit={handleAddInjury} className="space-y-4">
+          {submitError && (
+            <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-400 text-xs font-bold text-center">
+              ⚠️ {submitError}
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-zinc-300">الفئة / الفوج لفلترة اللاعبين</label>
+              <label className="text-sm font-medium text-zinc-300">الفئة / الفوج</label>
               <select
                 onChange={(e) => setSelectedTeamForFiltering(e.target.value)}
                 className="w-full rounded-md border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-50 focus:border-emerald-500 focus:outline-none"
               >
-                <option value="">كل الفئات</option>
+                <option value="">كل اللاعبين</option>
                 {categories.map(cat => (
                   <optgroup key={cat.category_id} label={cat.name}>
                     <option value={`cat:${cat.name}`}>{cat.name} (كل اللاعبين)</option>
@@ -251,7 +285,7 @@ export function Injuries() {
               </select>
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-zinc-300">اللاعب</label>
+              <label className="text-sm font-medium text-zinc-300">اللاعب <span className="text-rose-400">*</span></label>
               <select required name="player_id" defaultValue={editingInjury?.player_id} className="w-full rounded-md border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-50 focus:border-emerald-500 focus:outline-none">
                 <option value="">اختر اللاعب</option>
                 {players
@@ -266,40 +300,42 @@ export function Injuries() {
                     return true;
                   })
                   .map(p => (
-                    <option key={p.player_id} value={p.player_id}>{p.name}</option>
+                    <option key={p.player_id} value={p.player_id}>{p.name} ({p.category || 'فئة غير محددة'})</option>
                   ))}
               </select>
             </div>
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-zinc-300">نوع الإصابة</label>
-            <input required name="injury_type" defaultValue={editingInjury?.injury_type} type="text" className="w-full rounded-md border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-50 focus:border-emerald-500 focus:outline-none" placeholder="مثال: تمزق عضلي" />
+            <label className="text-sm font-medium text-zinc-300">نوع الفحص أو الإصابة <span className="text-rose-400">*</span></label>
+            <input required name="injury_type" defaultValue={editingInjury?.injury_type} type="text" className="w-full rounded-md border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-50 focus:border-emerald-500 focus:outline-none" placeholder="مثال: فحص روتيني / التواء كاحل / إجهاد عضلي" />
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-zinc-300">الشدة</label>
-            <select name="severity" defaultValue={editingInjury?.severity} className="w-full rounded-md border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-50 focus:border-emerald-500 focus:outline-none">
-              <option value="خفيفة">خفيفة</option>
-              <option value="متوسطة">متوسطة</option>
-              <option value="شديدة">شديدة</option>
+            <label className="text-sm font-medium text-zinc-300">درجة الشدة / الحالة</label>
+            <select name="severity" defaultValue={editingInjury?.severity || "خفيفة"} className="w-full rounded-md border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-50 focus:border-emerald-500 focus:outline-none">
+              <option value="خفيفة">خفيفة (لائق مع متابعة)</option>
+              <option value="متوسطة">متوسطة (بحاجة لراحة مؤقتة)</option>
+              <option value="شديدة">شديدة (غير لائق للمباريات حالياً)</option>
             </select>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-zinc-300">تاريخ الإصابة</label>
-              <input required name="date_occurred" defaultValue={editingInjury?.date_occurred} type="date" className="w-full rounded-md border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-50 focus:border-emerald-500 focus:outline-none" />
+              <label className="text-sm font-medium text-zinc-300">تاريخ المعاينة</label>
+              <input required name="date_occurred" defaultValue={editingInjury?.date_occurred || new Date().toISOString().split("T")[0]} type="date" className="w-full rounded-md border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-50 focus:border-emerald-500 focus:outline-none" />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-zinc-300">التعافي المتوقع</label>
-              <input required name="expected_recovery" defaultValue={editingInjury?.expected_recovery} type="date" className="w-full rounded-md border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-50 focus:border-emerald-500 focus:outline-none" />
+              <label className="text-sm font-medium text-zinc-300">التعافي المتوقع (اختياري)</label>
+              <input name="expected_recovery" defaultValue={editingInjury?.expected_recovery || editingInjury?.expected_return || ""} type="date" className="w-full rounded-md border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-50 focus:border-emerald-500 focus:outline-none" />
             </div>
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-zinc-300">ملاحظات طبية</label>
-            <textarea required name="notes" defaultValue={editingInjury?.notes} rows={3} className="w-full rounded-md border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-50 focus:border-emerald-500 focus:outline-none" placeholder="أدخل أي ملاحظات طبية أو خطة علاجية..."></textarea>
+            <label className="text-sm font-medium text-zinc-300">ملاحظات الفحص والعلاج</label>
+            <textarea name="notes" defaultValue={editingInjury?.notes || ""} rows={3} className="w-full rounded-md border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-50 focus:border-emerald-500 focus:outline-none" placeholder="أدخل أي ملاحظات طبية، تشخيص، أو برنامج علاجي..."></textarea>
           </div>
           <div className="pt-4 flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={() => { setIsModalOpen(false); setEditingInjury(null); }} className="border-zinc-800 text-zinc-300">إلغاء</Button>
-            <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700 text-white">{editingInjury ? "تحديث البيانات" : "تسجيل الإصابة"}</Button>
+            <Button type="button" variant="outline" onClick={() => { setIsModalOpen(false); setEditingInjury(null); setSubmitError(null); }} className="border-zinc-800 text-zinc-300" disabled={isSubmitting}>إلغاء</Button>
+            <Button type="submit" disabled={isSubmitting} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold">
+              {isSubmitting ? "جاري الحفظ..." : editingInjury ? "تحديث المعاينة" : "حفظ المعاينة الطبية"}
+            </Button>
           </div>
         </form>
       </Modal>

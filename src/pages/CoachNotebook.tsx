@@ -1071,10 +1071,20 @@ export function CoachNotebook() {
                 setIsPlayerModalOpen(false);
                 setFutModalPlayer(p);
               }} 
-              className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 text-zinc-950 font-black rounded-2xl h-12 col-span-2 shadow-lg shadow-amber-950/20 flex items-center justify-center gap-2"
+              className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 text-zinc-950 font-black rounded-2xl h-12 shadow-lg shadow-amber-950/20 flex items-center justify-center gap-2"
             >
               <Sparkles className="h-5 w-5" />
-              بطاقة EA FC / FIFA الرقمية ⭐
+              بطاقة EA FC / FIFA ⭐
+            </Button>
+            <Button 
+              onClick={() => {
+                setIsPlayerModalOpen(false);
+                navigate('/academy/injuries');
+              }} 
+              className="bg-rose-600/90 hover:bg-rose-700 text-white font-black rounded-2xl h-12 shadow-lg shadow-rose-600/20 flex items-center justify-center gap-2"
+            >
+              <Stethoscope className="h-5 w-5" />
+              المعاينة الطبية 🩺
             </Button>
             <Button 
               onClick={() => {

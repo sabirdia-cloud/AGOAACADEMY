@@ -864,7 +864,16 @@ function PlayerDetailScreen({ player, kits = [], onBack, user }: any) {
         const [s, a, i, m, e] = await Promise.all([
           supabase.from("player_stats").select("*").eq("player_id", player.player_id).maybeSingle().then(r => r.data),
           supabase.from("attendance").select("*, training(date,notes)").eq("player_id", player.player_id).order("created_at", { ascending: false }).limit(30).then(r => r.data || []),
-          supabase.from("injuries").select("*").eq("player_id", player.player_id).order("injury_date", { ascending: false }).then(r => r.data || []),
+          supabase.from("injuries").select("*").eq("player_id", player.player_id).then(r => {
+            if (r.error || !r.data) return [];
+            const list = [...r.data];
+            list.sort((x: any, y: any) => {
+              const dx = new Date(x.date_occurred || x.created_at || 0).getTime();
+              const dy = new Date(y.date_occurred || y.created_at || 0).getTime();
+              return dy - dx;
+            });
+            return list;
+          }),
           supabase.from("physical_metrics").select("*").eq("player_id", player.player_id).order("record_date", { ascending: false }).limit(5).then(r => r.data || []),
           supabase.from("evaluations").select("*").eq("player_id", player.player_id).order("evaluation_date", { ascending: false }).limit(10).then(r => r.data || []),
         ]);
@@ -1019,17 +1028,27 @@ function PlayerDetailScreen({ player, kits = [], onBack, user }: any) {
               </div>
             )}
             {tab === "injuries" && (
-              injuries.length === 0 ? <EmptyState icon={<Heart size={36} />} text="لا توجد إصابات مسجلة ✅" /> : (
-                injuries.map((inj: any) => (
-                  <div key={inj.injury_id} style={{ background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 14, padding: 14, marginBottom: 10 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                      <p style={{ color: C.text, fontSize: 14, fontWeight: 800 }}>{inj.injury_type || "إصابة"}</p>
-                      <span style={{ color: "#f87171", fontSize: 11 }}>{fmt(inj.injury_date)}</span>
+              injuries.length === 0 ? <EmptyState icon={<Heart size={36} />} text="لا توجد إصابات أو فحوصات مسجلة ✅" /> : (
+                injuries.map((inj: any) => {
+                  const isRec = inj.status === "جاهز" || inj.status === "تعافي" || (inj.expected_recovery && new Date(inj.expected_recovery) < new Date(new Date().setHours(0,0,0,0)));
+                  return (
+                    <div key={inj.injury_id} style={{ background: isRec ? "rgba(16,185,129,0.06)" : "rgba(239,68,68,0.06)", border: `1px solid ${isRec ? "rgba(16,185,129,0.2)" : "rgba(239,68,68,0.2)"}`, borderRadius: 14, padding: 14, marginBottom: 10 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                        <p style={{ color: C.text, fontSize: 14, fontWeight: 800 }}>{inj.injury_type || "معاينة طبية"}</p>
+                        <span style={{ color: isRec ? C.green : "#f87171", fontSize: 11, fontWeight: 700 }}>{inj.status || (isRec ? "جاهز" : "قيد العلاج")}</span>
+                      </div>
+                      <p style={{ color: C.muted, fontSize: 11, marginTop: 2 }}>📅 تاريخ المعاينة: {fmt(inj.date_occurred || inj.created_at)}</p>
+                      {(inj.expected_recovery || inj.expected_return) && (
+                        <p style={{ color: C.amber, fontSize: 11, marginTop: 4 }}>⏳ العودة المتوقعة: {fmt(inj.expected_recovery || inj.expected_return)}</p>
+                      )}
+                      {(inj.notes || inj.description) && (
+                        <p style={{ color: C.text, fontSize: 12, marginTop: 6, borderTop: `1px solid ${C.border}`, paddingTop: 6 }}>
+                          {inj.notes || inj.description}
+                        </p>
+                      )}
                     </div>
-                    {inj.description && <p style={{ color: C.muted, fontSize: 12, marginTop: 4 }}>{inj.description}</p>}
-                    {inj.return_date && <p style={{ color: C.amber, fontSize: 11, marginTop: 6 }}>العودة المتوقعة: {fmt(inj.return_date)}</p>}
-                  </div>
-                ))
+                  );
+                })
               )
             )}
             {tab === "physical" && (
@@ -3406,80 +3425,553 @@ function PhysicalScreen({ players, coachData }: any) {
   );
 }
 
+// ─── Add Injury / Medical Check Modal ─────────────────────────────────────────
+function AddInjuryModal({ isOpen, onClose, players = [], defaultPlayerId, onSuccess }: any) {
+  const [playerId, setPlayerId] = useState<string | number>(defaultPlayerId || (players[0]?.player_id || ""));
+  const [injuryType, setInjuryType] = useState("");
+  const [severity, setSeverity] = useState("خفيفة");
+  const [dateOccurred, setDateOccurred] = useState(new Date().toISOString().split("T")[0]);
+  const [expectedRecovery, setExpectedRecovery] = useState("");
+  const [notes, setNotes] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  useEffect(() => {
+    if (defaultPlayerId) {
+      setPlayerId(defaultPlayerId);
+    } else if (players.length > 0 && !playerId) {
+      setPlayerId(players[0].player_id);
+    }
+  }, [defaultPlayerId, players, playerId]);
+
+  if (!isOpen) return null;
+
+  const quickTypes = [
+    "فحص روتيني / جاهزية",
+    "التواء كاحل",
+    "إجهاد / شد عضلي",
+    "كدمة قوية",
+    "آلام ركبة ومفاصل",
+    "آلام أسفل الظهر"
+  ];
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!playerId) {
+      setErrorMsg("يرجى اختيار اللاعب أولاً");
+      return;
+    }
+    if (!injuryType.trim()) {
+      setErrorMsg("يرجى تحديد أو كتابة نوع المعاينة / الإصابة");
+      return;
+    }
+
+    setIsSaving(true);
+    setErrorMsg("");
+
+    try {
+      const payload: any = {
+        player_id: Number(playerId),
+        injury_type: injuryType.trim(),
+        severity,
+        date_occurred: dateOccurred || new Date().toISOString().split("T")[0],
+        status: severity === "خفيفة" ? "متابعة خفيفة" : "قيد العلاج",
+        notes: notes.trim()
+      };
+      if (expectedRecovery) {
+        payload.expected_recovery = expectedRecovery;
+        payload.expected_return = expectedRecovery;
+      }
+
+      await api.addInjury(payload);
+      onSuccess?.();
+      onClose();
+    } catch (err: any) {
+      console.error("Save injury error:", err);
+      setErrorMsg(err?.message || "حدث خطأ أثناء حفظ المعاينة الطبية");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.85)", backdropFilter: "blur(6px)", display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={onClose}>
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: "100%",
+          maxWidth: 520,
+          background: "#0c101c",
+          border: `1px solid ${C.border}`,
+          borderTop: "2px solid #f43f5e",
+          borderRadius: "24px 24px 0 0",
+          maxHeight: "90vh",
+          overflowY: "auto",
+          padding: "20px 20px 32px",
+          direction: "rtl",
+          color: C.text
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 38, height: 38, borderRadius: 12, background: "rgba(244,63,94,0.15)", display: "flex", alignItems: "center", justifyContent: "center", color: "#f43f5e" }}>
+              <Stethoscope size={20} />
+            </div>
+            <div>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 900, color: "#fff" }}>تسجيل معاينة طبية / فحص</h3>
+              <p style={{ margin: 0, fontSize: 11, color: C.muted }}>متابعة الحالة الصحية والبدنية للاعب</p>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", padding: 4 }}>
+            <X size={20} />
+          </button>
+        </div>
+
+        {errorMsg && (
+          <div style={{ background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 12, padding: "10px 14px", color: "#fca5a5", fontSize: 12, marginBottom: 14 }}>
+            ⚠️ {errorMsg}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {/* Player select */}
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 700, color: C.muted, display: "block", marginBottom: 6 }}>
+              اللاعب <span style={{ color: "#f43f5e" }}>*</span>
+            </label>
+            <select
+              value={playerId}
+              onChange={e => setPlayerId(e.target.value)}
+              required
+              disabled={!!defaultPlayerId}
+              style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 12px", color: "#fff", fontSize: 13, outline: "none" }}
+            >
+              <option value="" style={{ background: "#0c101c" }}>اختر اللاعب...</option>
+              {players.map((p: any) => (
+                <option key={p.player_id} value={p.player_id} style={{ background: "#0c101c" }}>
+                  {p.name} {p.position ? `(${p.position})` : ""} {p.category ? `- ${p.category}` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Quick presets */}
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 700, color: C.muted, display: "block", marginBottom: 6 }}>
+              نوع المعاينة أو الإصابة
+            </label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+              {quickTypes.map(t => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setInjuryType(t)}
+                  style={{
+                    background: injuryType === t ? "rgba(244,63,94,0.2)" : "rgba(255,255,255,0.04)",
+                    border: `1px solid ${injuryType === t ? "#f43f5e" : C.border}`,
+                    color: injuryType === t ? "#f43f5e" : C.muted,
+                    borderRadius: 20,
+                    padding: "5px 12px",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: "pointer"
+                  }}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+            <input
+              type="text"
+              placeholder="أو اكتب تشخيصك الطبي هنا..."
+              value={injuryType}
+              onChange={e => setInjuryType(e.target.value)}
+              required
+              style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 12px", color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" }}
+            />
+          </div>
+
+          {/* Severity & Date */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 700, color: C.muted, display: "block", marginBottom: 6 }}>درجة الحالة</label>
+              <select
+                value={severity}
+                onChange={e => setSeverity(e.target.value)}
+                style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 12px", color: "#fff", fontSize: 13, outline: "none" }}
+              >
+                <option value="خفيفة" style={{ background: "#0c101c" }}>خفيفة (لائق مع مراعاة)</option>
+                <option value="متوسطة" style={{ background: "#0c101c" }}>متوسطة (بحاجة لراحة مؤقتة)</option>
+                <option value="شديدة" style={{ background: "#0c101c" }}>شديدة (غير لائق حالياً)</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 700, color: C.muted, display: "block", marginBottom: 6 }}>تاريخ المعاينة</label>
+              <input
+                type="date"
+                value={dateOccurred}
+                onChange={e => setDateOccurred(e.target.value)}
+                required
+                style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 12px", color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" }}
+              />
+            </div>
+          </div>
+
+          {/* Expected recovery */}
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 700, color: C.muted, display: "block", marginBottom: 6 }}>
+              تاريخ العودة المتوقع (اختياري)
+            </label>
+            <input
+              type="date"
+              value={expectedRecovery}
+              onChange={e => setExpectedRecovery(e.target.value)}
+              style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 12px", color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" }}
+            />
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 700, color: C.muted, display: "block", marginBottom: 6 }}>
+              الملاحظات والبرنامج العلاجي
+            </label>
+            <textarea
+              rows={3}
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              placeholder="اكتب تفاصيل الفحص، التوصيات الطبية، أو خطة التدريب الخفيف..."
+              style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 12px", color: "#fff", fontSize: 13, outline: "none", resize: "none", boxSizing: "border-box" }}
+            />
+          </div>
+
+          {/* Actions */}
+          <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isSaving}
+              style={{ flex: 1, padding: "12px", borderRadius: 12, border: `1px solid ${C.border}`, background: "transparent", color: C.muted, fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+            >
+              إلغاء
+            </button>
+            <button
+              type="submit"
+              disabled={isSaving}
+              style={{ flex: 2, padding: "12px", borderRadius: 12, border: "none", background: "linear-gradient(135deg, #f43f5e, #e11d48)", color: "#fff", fontSize: 13, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: isSaving ? 0.7 : 1 }}
+            >
+              {isSaving ? <Loader2 size={16} className="spin" /> : <Save size={16} />}
+              {isSaving ? "جاري الحفظ..." : "حفظ المعاينة الطبية"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ─── Medical Screen ───────────────────────────────────────────────────────────
 function MedicalScreen({ players }: any) {
   const [injuries, setInjuries] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [tab, setTab] = useState<"active" | "history">("active");
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
-  useEffect(() => {
-    const load = async () => {
-      setIsLoading(true);
-      try {
-        if (players.length > 0) {
-          const ids = players.map((p: any) => p.player_id);
-          const { data } = await supabase.from("injuries").select("*, players(name,position)").in("player_id", ids).order("injury_date", { ascending: false });
-          setInjuries(data || []);
+  const loadData = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      if (players && players.length > 0) {
+        const ids = players.map((p: any) => p.player_id);
+        let res = await supabase.from("injuries").select("*, players(name,position)").in("player_id", ids);
+        if (res.error || !res.data) {
+          res = await supabase.from("injuries").select("*").in("player_id", ids);
         }
-      } catch { }
-      setIsLoading(false);
-    };
-    load();
+        const list = (res.data || []).map((inj: any) => {
+          const p = players.find((pl: any) => Number(pl.player_id) === Number(inj.player_id));
+          return {
+            ...inj,
+            player_name: inj.players?.name || p?.name || "لاعب",
+            player_pos: inj.players?.position || p?.position || ""
+          };
+        });
+        list.sort((a: any, b: any) => {
+          const da = new Date(a.date_occurred || a.created_at || 0).getTime();
+          const db = new Date(b.date_occurred || b.created_at || 0).getTime();
+          return db - da;
+        });
+        setInjuries(list);
+      } else {
+        setInjuries([]);
+      }
+    } catch (e) {
+      console.error("Medical screen load error:", e);
+    }
+    setIsLoading(false);
   }, [players]);
 
-  const active = injuries.filter(i => i.status === "active" || !i.return_date || new Date(i.return_date) > new Date());
-  const history = injuries.filter(i => i.return_date && new Date(i.return_date) <= new Date());
-  const list = tab === "active" ? active : history;
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const handleMarkRecovered = async (injuryId: number) => {
+    try {
+      await api.updateInjury(injuryId, { status: "جاهز" });
+      setInjuries(prev => prev.map(inj => inj.injury_id === injuryId ? { ...inj, status: "جاهز" } : inj));
+    } catch (err) {
+      alert("تعذر تحديث حالة التعافي");
+    }
+  };
+
+  const handleDelete = async (injuryId: number) => {
+    if (!confirm("هل أنت متأكد من حذف هذا السجل الطبي؟")) return;
+    try {
+      await api.deleteInjury(injuryId);
+      setInjuries(prev => prev.filter(inj => inj.injury_id !== injuryId));
+    } catch (err) {
+      alert("تعذر حذف السجل الطبي");
+    }
+  };
+
+  const isInjuryActive = (i: any) => {
+    if (i.status === "جاهز" || i.status === "تعافي" || i.status === "recovered") return false;
+    if (i.status === "قيد العلاج" || i.status === "active") return true;
+    const ret = i.expected_return || i.expected_recovery || i.return_date;
+    if (ret && new Date(ret) < new Date(new Date().setHours(0, 0, 0, 0))) return false;
+    return true;
+  };
+
+  const active = injuries.filter(i => isInjuryActive(i));
+  const history = injuries.filter(i => !isInjuryActive(i));
+  let list = tab === "active" ? active : history;
+
+  if (searchQuery.trim()) {
+    const q = searchQuery.toLowerCase().trim();
+    list = list.filter(i => (i.player_name || "").toLowerCase().includes(q) || (i.injury_type || "").toLowerCase().includes(q));
+  }
 
   return (
     <div style={{ direction: "rtl", paddingBottom: 110 }} className="fade-in">
-      <div style={{ position: "sticky", top: 57, zIndex: 40, background: "rgba(6,8,16,0.98)", padding: "14px 16px 10px", borderBottom: `1px solid ${C.border}` }}>
-        <h2 style={{ color: "#fff", fontSize: 18, fontWeight: 900, marginBottom: 10 }}>المتابعة الطبية</h2>
+      {/* Sticky Header with Title, Add Button, Tabs & Search */}
+      <div style={{ position: "sticky", top: 57, zIndex: 40, background: "rgba(6,8,16,0.98)", padding: "14px 16px 12px", borderBottom: `1px solid ${C.border}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div>
+            <h2 style={{ color: "#fff", fontSize: 18, fontWeight: 900, margin: 0 }}>المتابعة الطبية</h2>
+            <p style={{ color: C.muted, fontSize: 11, margin: "2px 0 0" }}>فحص وإصابات وتأهيل لاعبي الفوج</p>
+          </div>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="btn-press"
+            style={{
+              background: "linear-gradient(135deg, #f43f5e, #e11d48)",
+              color: "#fff",
+              border: "none",
+              borderRadius: 12,
+              padding: "8px 14px",
+              fontSize: 12,
+              fontWeight: 800,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              cursor: "pointer",
+              boxShadow: "0 4px 14px rgba(244,63,94,0.3)"
+            }}
+          >
+            <Plus size={15} /> تسجيل فحص / إصابة
+          </button>
+        </div>
+
+        {/* Search input */}
+        <div style={{ position: "relative", marginBottom: 10 }}>
+          <Search size={14} color={C.muted} style={{ position: "absolute", right: 12, top: 11 }} />
+          <input
+            type="text"
+            placeholder="بحث باسم اللاعب أو نوع الإصابة..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            style={{
+              width: "100%",
+              background: "rgba(255,255,255,0.05)",
+              border: `1px solid ${C.border}`,
+              borderRadius: 12,
+              padding: "8px 34px 8px 12px",
+              color: "#fff",
+              fontSize: 12,
+              outline: "none",
+              boxSizing: "border-box"
+            }}
+          />
+        </div>
+
+        {/* Tab switch */}
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={() => setTab("active")} className="btn-press"
-            style={{ flex: 1, padding: "8px 0", borderRadius: 10, border: `1px solid ${tab === "active" ? "#f43f5e" : C.border}`, background: tab === "active" ? "rgba(244,63,94,0.12)" : "transparent", color: tab === "active" ? "#f43f5e" : C.muted, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-            🚑 نشطة ({active.length})
+            style={{ flex: 1, padding: "8px 0", borderRadius: 10, border: `1px solid ${tab === "active" ? "#f43f5e" : C.border}`, background: tab === "active" ? "rgba(244,63,94,0.15)" : "transparent", color: tab === "active" ? "#f43f5e" : C.muted, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+            🚑 نشطة / قيد المتابعة ({active.length})
           </button>
           <button onClick={() => setTab("history")} className="btn-press"
-            style={{ flex: 1, padding: "8px 0", borderRadius: 10, border: `1px solid ${tab === "history" ? C.green : C.border}`, background: tab === "history" ? `${C.green}12` : "transparent", color: tab === "history" ? C.green : C.muted, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-            ✅ تعافي ({history.length})
+            style={{ flex: 1, padding: "8px 0", borderRadius: 10, border: `1px solid ${tab === "history" ? C.green : C.border}`, background: tab === "history" ? `${C.green}15` : "transparent", color: tab === "history" ? C.green : C.muted, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+            ✅ تعافي وجاهزية ({history.length})
           </button>
         </div>
       </div>
 
-      <div style={{ padding: "12px 16px" }}>
-        {/* Injured players summary */}
+      <div style={{ padding: "14px 16px" }}>
         {tab === "active" && active.length > 0 && (
-          <div style={{ background: "rgba(244,63,94,0.08)", border: "1px solid rgba(244,63,94,0.2)", borderRadius: 14, padding: 12, marginBottom: 14 }}>
-            <p style={{ color: "#f43f5e", fontSize: 12, fontWeight: 700 }}>⚠️ {active.length} لاعب مصاب حالياً</p>
+          <div style={{ background: "rgba(244,63,94,0.08)", border: "1px solid rgba(244,63,94,0.25)", borderRadius: 14, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ color: "#f43f5e", fontSize: 12, fontWeight: 800 }}>⚠️ {active.length} لاعب تحت الرعاية الطبية حالياً</span>
+            <span style={{ color: C.muted, fontSize: 11 }}>حرصاً على سلامتهم</span>
           </div>
         )}
 
-        {isLoading ? <div style={{ textAlign: "center", padding: 40 }}><Loader2 size={30} color="#f43f5e" className="spin" style={{ display: "block", margin: "0 auto" }} /></div> :
-          list.length === 0 ? <EmptyState icon={<Stethoscope size={36} />} text={tab === "active" ? "لا توجد إصابات نشطة ✅" : "لا يوجد سجل إصابات"} /> : (
-            list.map(inj => {
-              const playerName = inj.players?.name || "لاعب";
-              const isActive = !inj.return_date || new Date(inj.return_date) > new Date();
-              return (
-                <div key={inj.injury_id} style={{ background: `rgba(${isActive ? "244,63,94" : "16,185,129"},0.05)`, border: `1px solid rgba(${isActive ? "244,63,94" : "16,185,129"},0.2)`, borderRadius: 16, padding: 14, marginBottom: 10 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                    <div>
-                      <p style={{ color: C.text, fontSize: 14, fontWeight: 800 }}>{playerName}</p>
-                      <p style={{ color: isActive ? "#f43f5e" : C.green, fontSize: 12, fontWeight: 700, marginTop: 2 }}>{inj.injury_type || "إصابة"}</p>
-                    </div>
-                    <div style={{ textAlign: "left" }}>
-                      <p style={{ color: C.muted, fontSize: 10 }}>{fmt(inj.injury_date)}</p>
-                      {inj.return_date && <p style={{ color: C.amber, fontSize: 10, marginTop: 3 }}>العودة: {fmt(inj.return_date)}</p>}
-                    </div>
+        {isLoading ? (
+          <div style={{ textAlign: "center", padding: 40 }}>
+            <Loader2 size={32} color="#f43f5e" className="spin" style={{ display: "block", margin: "0 auto 10px" }} />
+            <p style={{ color: C.muted, fontSize: 12 }}>جاري تحميل السجلات الطبية...</p>
+          </div>
+        ) : list.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "40px 16px" }}>
+            <EmptyState
+              icon={<Stethoscope size={40} />}
+              text={tab === "active" ? "لا توجد أي إصابات نشطة حالياً، كل اللاعبين لائقون ✅" : "لا يوجد سجل إصابات سابقة"}
+            />
+            {tab === "active" && (
+              <button
+                onClick={() => setShowAddModal(true)}
+                className="btn-press"
+                style={{
+                  marginTop: 16,
+                  background: "rgba(244,63,94,0.15)",
+                  border: "1px solid rgba(244,63,94,0.3)",
+                  color: "#f43f5e",
+                  borderRadius: 12,
+                  padding: "10px 20px",
+                  fontSize: 12,
+                  fontWeight: 800,
+                  cursor: "pointer"
+                }}
+              >
+                ➕ تسجيل فحص أو إصابة للاعب
+              </button>
+            )}
+          </div>
+        ) : (
+          list.map(inj => {
+            const playerName = inj.player_name || inj.players?.name || "لاعب";
+            const isActive = isInjuryActive(inj);
+            const returnDate = inj.expected_return || inj.expected_recovery || inj.return_date;
+            const checkDate = inj.date_occurred || inj.created_at;
+
+            return (
+              <div
+                key={inj.injury_id}
+                style={{
+                  background: `rgba(${isActive ? "244,63,94" : "16,185,129"},0.05)`,
+                  border: `1px solid rgba(${isActive ? "244,63,94" : "16,185,129"},0.22)`,
+                  borderRadius: 18,
+                  padding: 15,
+                  marginBottom: 12
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                  <div>
+                    <p style={{ color: C.text, fontSize: 15, fontWeight: 900, margin: 0 }}>{playerName}</p>
+                    <p style={{ color: isActive ? "#f43f5e" : C.green, fontSize: 12, fontWeight: 700, margin: "3px 0 0" }}>
+                      🩺 {inj.injury_type || "معاينة طبية"}
+                    </p>
                   </div>
-                  {inj.description && <p style={{ color: C.muted, fontSize: 12, borderTop: `1px solid ${C.border}`, paddingTop: 8 }}>{inj.description}</p>}
-                  {inj.treatment && <p style={{ color: C.blue, fontSize: 11, marginTop: 5 }}>العلاج: {inj.treatment}</p>}
+                  <div style={{ textAlign: "left" }}>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 800,
+                        background: isActive ? "rgba(244,63,94,0.15)" : "rgba(16,185,129,0.15)",
+                        color: isActive ? "#f43f5e" : C.green,
+                        padding: "3px 8px",
+                        borderRadius: 8,
+                        display: "inline-block"
+                      }}
+                    >
+                      {inj.status || (isActive ? "قيد العلاج" : "جاهز")}
+                    </span>
+                    {inj.severity && (
+                      <p style={{ color: C.muted, fontSize: 10, margin: "4px 0 0" }}>
+                        الشدة: {inj.severity}
+                      </p>
+                    )}
+                  </div>
                 </div>
-              );
-            })
-          )
-        }
+
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: `1px solid ${C.border}`, paddingTop: 8, marginTop: 8, fontSize: 11, color: C.muted }}>
+                  <span>📅 تاريخ المعاينة: {fmt(checkDate)}</span>
+                  {returnDate && <span style={{ color: C.amber, fontWeight: 700 }}>⏳ العودة: {fmt(returnDate)}</span>}
+                </div>
+
+                {(inj.notes || inj.description) && (
+                  <div style={{ background: "rgba(0,0,0,0.25)", borderRadius: 10, padding: "8px 10px", marginTop: 8 }}>
+                    <p style={{ color: C.text, fontSize: 11, margin: 0, lineHeight: 1.5 }}>
+                      💬 {inj.notes || inj.description}
+                    </p>
+                  </div>
+                )}
+
+                {/* Quick actions on card */}
+                <div style={{ display: "flex", gap: 8, marginTop: 10, borderTop: `1px solid ${C.border}`, paddingTop: 8 }}>
+                  {isActive && (
+                    <button
+                      onClick={() => handleMarkRecovered(inj.injury_id)}
+                      className="btn-press"
+                      style={{
+                        flex: 1,
+                        background: "rgba(16,185,129,0.12)",
+                        border: "1px solid rgba(16,185,129,0.25)",
+                        color: C.green,
+                        borderRadius: 10,
+                        padding: "6px 10px",
+                        fontSize: 11,
+                        fontWeight: 800,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 4
+                      }}
+                    >
+                      <CheckCircle size={13} /> تسجيل التعافي والجاهزية
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleDelete(inj.injury_id)}
+                    className="btn-press"
+                    style={{
+                      background: "rgba(239,68,68,0.1)",
+                      border: "1px solid rgba(239,68,68,0.2)",
+                      color: "#f87171",
+                      borderRadius: 10,
+                      padding: "6px 12px",
+                      fontSize: 11,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 4
+                    }}
+                  >
+                    <Trash2 size={13} /> حذف
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
+
+      <AddInjuryModal
+        isOpen={showAddModal}
+        onClose={() => setShowAddModal(false)}
+        players={players}
+        onSuccess={loadData}
+      />
     </div>
   );
 }

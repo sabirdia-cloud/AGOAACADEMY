@@ -764,22 +764,77 @@ export const api = {
     return data ? data[0] : null;
   },
 
-  // --- Injuries ---
+  // --- Injuries & Medical Checks ---
   getInjuries: async () => {
-    const { data } = await supabase.from('injuries').select('*, players(name)');
-    return data || [];
+    try {
+      const { data, error } = await supabase.from('injuries').select('*, players(name,position)');
+      if (error || !data) {
+        const { data: raw } = await supabase.from('injuries').select('*');
+        return raw || [];
+      }
+      return data || [];
+    } catch {
+      return [];
+    }
   },
 
   addInjury: async (i: any) => {
+    // 1. Try directly
     const { data, error } = await supabase.from('injuries').insert([i]).select();
-    if (error) throw error;
-    return data ? data[0] : null;
+    if (!error && data) return data[0];
+
+    // 2. Retry with column name variations (expected_recovery vs expected_return)
+    const alt: any = { ...i };
+    if ('expected_recovery' in alt && !('expected_return' in alt)) {
+      alt.expected_return = alt.expected_recovery;
+      delete alt.expected_recovery;
+    } else if ('expected_return' in alt && !('expected_recovery' in alt)) {
+      alt.expected_recovery = alt.expected_return;
+      delete alt.expected_return;
+    }
+    const retry1 = await supabase.from('injuries').insert([alt]).select();
+    if (!retry1.error && retry1.data) return retry1.data[0];
+
+    // 3. Fallback to essential columns only
+    const minimal: any = {
+      player_id: Number(i.player_id),
+      injury_type: i.injury_type || 'فحص طبي / إصابة',
+      status: i.status || 'قيد العلاج'
+    };
+    if (i.severity) minimal.severity = i.severity;
+    if (i.date_occurred || i.injury_date) minimal.date_occurred = i.date_occurred || i.injury_date;
+    if (i.notes || i.description) minimal.notes = i.notes || i.description;
+    const retry2 = await supabase.from('injuries').insert([minimal]).select();
+    if (!retry2.error && retry2.data) return retry2.data[0];
+
+    throw error || retry1.error || retry2.error;
   },
 
   updateInjury: async (id: number, i: any) => {
     const { data, error } = await supabase.from('injuries').update(i).eq('injury_id', id).select();
-    if (error) throw error;
-    return data ? data[0] : null;
+    if (!error && data) return data[0];
+
+    const alt: any = { ...i };
+    if ('expected_recovery' in alt && !('expected_return' in alt)) {
+      alt.expected_return = alt.expected_recovery;
+      delete alt.expected_recovery;
+    } else if ('expected_return' in alt && !('expected_recovery' in alt)) {
+      alt.expected_recovery = alt.expected_return;
+      delete alt.expected_return;
+    }
+    const retry1 = await supabase.from('injuries').update(alt).eq('injury_id', id).select();
+    if (!retry1.error && retry1.data) return retry1.data[0];
+
+    const minimal: any = {};
+    if (i.injury_type) minimal.injury_type = i.injury_type;
+    if (i.status) minimal.status = i.status;
+    if (i.severity) minimal.severity = i.severity;
+    if (i.date_occurred || i.injury_date) minimal.date_occurred = i.date_occurred || i.injury_date;
+    if (i.notes || i.description) minimal.notes = i.notes || i.description;
+    const retry2 = await supabase.from('injuries').update(minimal).eq('injury_id', id).select();
+    if (!retry2.error && retry2.data) return retry2.data[0];
+
+    throw error || retry1.error || retry2.error;
   },
 
   deleteInjury: async (id: number) => {
