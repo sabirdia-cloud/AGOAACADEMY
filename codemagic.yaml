@@ -30,8 +30,12 @@ workflows:
           fi
           node -v
           npm -v
-          echo "--> Installing Node modules..."
+          echo "--> Installing root dependencies..."
           npm install --legacy-peer-deps
+          echo "--> Installing mobile-coach dependencies..."
+          cd mobile-coach
+          npm install --legacy-peer-deps
+          cd ..
 
       - name: 2. Build Web Application
         script: |
@@ -44,9 +48,8 @@ workflows:
           if command -v nvm &> /dev/null; then
             nvm use 22 || true
           fi
-          node -v
           cd mobile-coach
-          npx cap sync ios
+          npx cap sync ios --no-pod-install || npx cap copy ios
 
       - name: 4. Install CocoaPods Dependencies
         script: |
@@ -58,7 +61,6 @@ workflows:
         script: |
           cd mobile-coach/ios/App
           
-          # Initialize keychain if certificate is provided in Codemagic UI
           if [[ -n "$CM_CERTIFICATE" ]]; then
             echo "--> Setting up code signing certificates..."
             keychain initialize
@@ -80,9 +82,9 @@ workflows:
               
             echo "--> Packaging IPA from archive..."
             mkdir -p build/Payload
-            cp -R build/App.xcarchive/Products/Applications/App.app build/Payload/
+            cp -R build/App.xcarchive/Products/Applications/*.app build/Payload/
             cd build
-            zip -r AGOA-Coach-iOS-unsigned.ipa Payload
+            zip -r AGOA-Coach-iOS.ipa Payload
             cd ..
           fi
 
@@ -125,8 +127,12 @@ workflows:
           fi
           node -v
           npm -v
-          echo "--> Installing Node modules..."
+          echo "--> Installing root dependencies..."
           npm install --legacy-peer-deps
+          echo "--> Installing mobile-parent dependencies..."
+          cd mobile-parent
+          npm install --legacy-peer-deps
+          cd ..
 
       - name: 2. Build Web Application for Parents
         script: |
@@ -139,9 +145,8 @@ workflows:
           if command -v nvm &> /dev/null; then
             nvm use 22 || true
           fi
-          node -v
           cd mobile-parent
-          npx cap sync ios
+          npx cap sync ios --no-pod-install || npx cap copy ios
 
       - name: 4. Install CocoaPods Dependencies
         script: |
@@ -174,9 +179,9 @@ workflows:
               
             echo "--> Packaging IPA from archive..."
             mkdir -p build/Payload
-            cp -R build/App.xcarchive/Products/Applications/App.app build/Payload/
+            cp -R build/App.xcarchive/Products/Applications/*.app build/Payload/
             cd build
-            zip -r AGOA-Parent-iOS-unsigned.ipa Payload
+            zip -r AGOA-Parent-iOS.ipa Payload
             cd ..
           fi
 

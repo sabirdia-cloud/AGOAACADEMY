@@ -1,6 +1,10 @@
-require_relative '../../node_modules/@capacitor/ios/scripts/pods_helpers'
+if File.exist?('../../node_modules/@capacitor/ios/scripts/pods_helpers.rb')
+  require_relative '../../node_modules/@capacitor/ios/scripts/pods_helpers'
+elsif File.exist?('../../../node_modules/@capacitor/ios/scripts/pods_helpers.rb')
+  require_relative '../../../node_modules/@capacitor/ios/scripts/pods_helpers'
+end
 
-platform :ios, '13.0'
+platform :ios, '15.0'
 use_frameworks!
 
 # workaround to avoid Xcode caching of Pods that requires
@@ -9,9 +13,9 @@ use_frameworks!
 install! 'cocoapods', :disable_input_output_paths => true
 
 def capacitor_pods
-  pod 'Capacitor', :path => '../../node_modules/@capacitor/ios'
-  pod 'CapacitorCordova', :path => '../../node_modules/@capacitor/ios'
-
+  cap_path = File.exist?('../../node_modules/@capacitor/ios') ? '../../node_modules/@capacitor/ios' : '../../../node_modules/@capacitor/ios'
+  pod 'Capacitor', :path => cap_path
+  pod 'CapacitorCordova', :path => cap_path
 end
 
 target 'App' do
