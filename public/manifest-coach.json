@@ -1,0 +1,49 @@
+{
+  "name": "AGOA Coach - أكاديمية أجيال وادي العثمانية",
+  "short_name": "AGOA Coach",
+  "description": "تطبيق الطاقم الفني والمدربين لأكاديمية أجيال وادي العثمانية AGOA",
+  "start_url": "/coach",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
+  "dir": "rtl",
+  "lang": "ar",
+  "categories": ["sports", "productivity", "management"],
+  "icons": [
+    {
+      "src": "/icons/coach-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/coach-icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/coach-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "دفتر المدرب",
+      "short_name": "الدفتر",
+      "description": "الوصول السريع إلى دفتر المدرب التكتيكي",
+      "url": "/coach"
+    },
+    {
+      "name": "تسجيل الحضور",
+      "short_name": "الحضور",
+      "description": "مسح باركود بطاقات اللاعبين",
+      "url": "/coach"
+    }
+  ]
+}

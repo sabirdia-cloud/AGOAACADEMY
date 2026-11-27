@@ -19,6 +19,7 @@ const Reports = lazy(() => import("./pages/Reports").then(m => ({ default: m.Rep
 const Injuries = lazy(() => import("./pages/Injuries").then(m => ({ default: m.Injuries })));
 const Evaluations = lazy(() => import("./pages/Evaluations").then(m => ({ default: m.Evaluations })));
 const Coaches = lazy(() => import("./pages/Coaches").then(m => ({ default: m.Coaches })));
+const CoachPWA = lazy(() => import("./pages/mobile/CoachPWA").then(m => ({ default: m.CoachPWA })));
 const StaffManagement = lazy(() => import("./pages/StaffManagement").then(m => ({ default: m.StaffManagement })));
 const PhysicalMetrics = lazy(() => import("./pages/PhysicalMetrics").then(m => ({ default: m.PhysicalMetrics })));
 const Leaderboard = lazy(() => import("./pages/Leaderboard").then(m => ({ default: m.Leaderboard })));
@@ -121,6 +122,9 @@ function AppContent() {
       <Suspense fallback={<PageLoader />}>
         <Routes>
           {/* COMMON PUBLIC ROUTES */}
+          <Route path="/coach" element={<CoachPWA />} />
+          <Route path="/coach/*" element={<CoachPWA />} />
+          <Route path="/coach-app" element={<CoachPWA />} />
           <Route path="/login" element={<Login />} />
           <Route path="/login/:type" element={<Login />} />
           <Route path="/parent-signup" element={<ParentSignup />} />

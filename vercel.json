@@ -14,7 +14,11 @@
       "destination": "/assets/$1"
     },
     {
-      "source": "/(.*)/(icon\\.svg|manifest\\.json|favicon\\.ico|academy-logo\\.png)",
+      "source": "/icons/(.*)",
+      "destination": "/icons/$1"
+    },
+    {
+      "source": "/(.*)/(icon\\.svg|manifest.*\\.json|favicon\\.ico|academy-logo\\.png|academy-badge\\.png|sw\\.js)",
       "destination": "/$2"
     },
     {
@@ -23,6 +27,28 @@
     }
   ],
   "headers": [
+    {
+      "source": "/sw.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
+        },
+        {
+          "key": "Service-Worker-Allowed",
+          "value": "/"
+        }
+      ]
+    },
+    {
+      "source": "/manifest(.*)\\.json",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
+        }
+      ]
+    },
     {
       "source": "/assets/(.*)",
       "headers": [
@@ -51,4 +77,3 @@
     }
   ]
 }
-
