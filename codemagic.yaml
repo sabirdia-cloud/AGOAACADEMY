@@ -1,0 +1,172 @@
+# ==============================================================================
+# Codemagic CI/CD Configuration for AGOA Academy (iOS Cloud Build)
+# Football Academy Management System - Académie Générations Oued Athmania
+# ==============================================================================
+
+workflows:
+  # ----------------------------------------------------------------------------
+  # Workflow 1: Coach Mobile App (AGOA Coach iOS)
+  # ----------------------------------------------------------------------------
+  agoa-coach-ios:
+    name: AGOA Coach iOS Build
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      node: 20
+      xcode: latest
+      cocoapods: default
+      vars:
+        PACKAGE_NAME: "com.agoa.coach"
+        APP_TITLE: "AGOA Coach"
+        XCODE_WORKSPACE: "mobile-coach/ios/App/App.xcworkspace"
+        XCODE_SCHEME: "App"
+    scripts:
+      - name: 1. Install Node Dependencies
+        script: |
+          echo "--> Installing Node modules..."
+          npm install --legacy-peer-deps
+
+      - name: 2. Build Web Application
+        script: |
+          echo "--> Compiling Vite Coach Mobile Bundle..."
+          npm run build:coaches-mobile
+
+      - name: 3. Capacitor Sync iOS
+        script: |
+          echo "--> Syncing Capacitor iOS platform..."
+          cd mobile-coach
+          npx cap sync ios
+
+      - name: 4. Install CocoaPods Dependencies
+        script: |
+          echo "--> Installing CocoaPods in mobile-coach/ios/App..."
+          cd mobile-coach/ios/App
+          pod install --repo-update
+
+      - name: 5. Build iOS Archive & IPA
+        script: |
+          cd mobile-coach/ios/App
+          
+          # Initialize keychain if certificate is provided in Codemagic UI
+          if [[ -n "$CM_CERTIFICATE" ]]; then
+            echo "--> Setting up code signing certificates..."
+            keychain initialize
+            xcode-project use-profiles
+            xcode-project build-ipa \
+              --workspace "App.xcworkspace" \
+              --scheme "App"
+          else
+            echo "--> Building Release archive without pre-configured signing profile..."
+            xcodebuild \
+              -workspace "App.xcworkspace" \
+              -scheme "App" \
+              -configuration Release \
+              -destination generic/platform=iOS \
+              -archivePath "build/App.xcarchive" \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              archive
+              
+            echo "--> Packaging IPA from archive..."
+            mkdir -p build/Payload
+            cp -R build/App.xcarchive/Products/Applications/App.app build/Payload/
+            cd build
+            zip -r AGOA-Coach-iOS-unsigned.ipa Payload
+            cd ..
+          fi
+
+    artifacts:
+      - mobile-coach/ios/App/build/**/*.ipa
+      - mobile-coach/ios/App/build/*.ipa
+      - mobile-coach/ios/App/build/App.xcarchive
+      - "*.ipa"
+    publishing:
+      email:
+        recipients:
+          - admin@agoa-academy.com
+        notify:
+          on_success: true
+          on_failure: true
+
+  # ----------------------------------------------------------------------------
+  # Workflow 2: Parent Mobile App (AGOA Parent iOS)
+  # ----------------------------------------------------------------------------
+  agoa-parent-ios:
+    name: AGOA Parent iOS Build
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      node: 20
+      xcode: latest
+      cocoapods: default
+      vars:
+        PACKAGE_NAME: "com.agoa.parent"
+        APP_TITLE: "AGOA Parent"
+        XCODE_WORKSPACE: "mobile-parent/ios/App/App.xcworkspace"
+        XCODE_SCHEME: "App"
+    scripts:
+      - name: 1. Install Node Dependencies
+        script: |
+          echo "--> Installing Node modules..."
+          npm install --legacy-peer-deps
+
+      - name: 2. Build Web Application for Parents
+        script: |
+          echo "--> Compiling Vite Parent Mobile Bundle..."
+          npm run build:parent
+
+      - name: 3. Capacitor Sync iOS
+        script: |
+          echo "--> Syncing Capacitor iOS platform..."
+          cd mobile-parent
+          npx cap sync ios
+
+      - name: 4. Install CocoaPods Dependencies
+        script: |
+          echo "--> Installing CocoaPods in mobile-parent/ios/App..."
+          cd mobile-parent/ios/App
+          pod install --repo-update
+
+      - name: 5. Build iOS Archive & IPA
+        script: |
+          cd mobile-parent/ios/App
+          
+          if [[ -n "$CM_CERTIFICATE" ]]; then
+            echo "--> Setting up code signing certificates..."
+            keychain initialize
+            xcode-project use-profiles
+            xcode-project build-ipa \
+              --workspace "App.xcworkspace" \
+              --scheme "App"
+          else
+            echo "--> Building Release archive without pre-configured signing profile..."
+            xcodebuild \
+              -workspace "App.xcworkspace" \
+              -scheme "App" \
+              -configuration Release \
+              -destination generic/platform=iOS \
+              -archivePath "build/App.xcarchive" \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              archive
+              
+            echo "--> Packaging IPA from archive..."
+            mkdir -p build/Payload
+            cp -R build/App.xcarchive/Products/Applications/App.app build/Payload/
+            cd build
+            zip -r AGOA-Parent-iOS-unsigned.ipa Payload
+            cd ..
+          fi
+
+    artifacts:
+      - mobile-parent/ios/App/build/**/*.ipa
+      - mobile-parent/ios/App/build/*.ipa
+      - mobile-parent/ios/App/build/App.xcarchive
+      - "*.ipa"
+    publishing:
+      email:
+        recipients:
+          - admin@agoa-academy.com
+        notify:
+          on_success: true
+          on_failure: true

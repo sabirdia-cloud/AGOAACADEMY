@@ -5,6 +5,10 @@ const config: CapacitorConfig = {
   appName: 'AGOA Parent',
   webDir: '../dist-parent',
   bundledWebRuntime: false,
+  server: {
+    androidScheme: 'https',
+    iosScheme: 'https',
+  },
   plugins: {
     SplashScreen: {
       launchShowDuration: 3000,

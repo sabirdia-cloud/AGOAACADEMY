@@ -45,5 +45,11 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>UIStatusBarStyle</key>
+	<string>UIStatusBarStyleLightContent</string>
+	<key>NSCameraUsageDescription</key>
+	<string>يستخدم التطبيق الكاميرا لمسح الرموز والتقاط صور الأبناء والوثائق</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>يستخدم التطبيق معرض الصور لرفع وتحديث صور الأبناء والوثائق</string>
 </dict>
 </plist>
