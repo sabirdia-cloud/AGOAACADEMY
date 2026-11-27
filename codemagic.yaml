@@ -55,6 +55,7 @@ workflows:
         script: |
           echo "--> Installing CocoaPods in mobile-coach/ios/App..."
           cd mobile-coach/ios/App
+          rm -f Podfile.lock
           pod install --repo-update
 
       - name: 5. Build iOS Archive & IPA
@@ -152,6 +153,7 @@ workflows:
         script: |
           echo "--> Installing CocoaPods in mobile-parent/ios/App..."
           cd mobile-parent/ios/App
+          rm -f Podfile.lock
           pod install --repo-update
 
       - name: 5. Build iOS Archive & IPA

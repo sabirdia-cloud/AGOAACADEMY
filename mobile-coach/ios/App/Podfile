@@ -5,6 +5,7 @@ elsif File.exist?('../../../node_modules/@capacitor/ios/scripts/pods_helpers.rb'
 end
 
 platform :ios, '15.0'
+project 'App.xcodeproj'
 use_frameworks!
 
 # workaround to avoid Xcode caching of Pods that requires
@@ -19,6 +20,7 @@ def capacitor_pods
 end
 
 target 'App' do
+  project 'App.xcodeproj'
   capacitor_pods
   # Add your Pods here
 end
