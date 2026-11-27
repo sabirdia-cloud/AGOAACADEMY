@@ -12,7 +12,7 @@ workflows:
     instance_type: mac_mini_m2
     max_build_duration: 60
     environment:
-      node: 20
+      node: 22
       xcode: latest
       cocoapods: default
       vars:
@@ -23,6 +23,13 @@ workflows:
     scripts:
       - name: 1. Install Node Dependencies
         script: |
+          echo "--> Checking Node.js version..."
+          if command -v nvm &> /dev/null; then
+            nvm install 22 || true
+            nvm use 22 || true
+          fi
+          node -v
+          npm -v
           echo "--> Installing Node modules..."
           npm install --legacy-peer-deps
 
@@ -34,6 +41,10 @@ workflows:
       - name: 3. Capacitor Sync iOS
         script: |
           echo "--> Syncing Capacitor iOS platform..."
+          if command -v nvm &> /dev/null; then
+            nvm use 22 || true
+          fi
+          node -v
           cd mobile-coach
           npx cap sync ios
 
@@ -96,7 +107,7 @@ workflows:
     instance_type: mac_mini_m2
     max_build_duration: 60
     environment:
-      node: 20
+      node: 22
       xcode: latest
       cocoapods: default
       vars:
@@ -107,6 +118,13 @@ workflows:
     scripts:
       - name: 1. Install Node Dependencies
         script: |
+          echo "--> Checking Node.js version..."
+          if command -v nvm &> /dev/null; then
+            nvm install 22 || true
+            nvm use 22 || true
+          fi
+          node -v
+          npm -v
           echo "--> Installing Node modules..."
           npm install --legacy-peer-deps
 
@@ -118,6 +136,10 @@ workflows:
       - name: 3. Capacitor Sync iOS
         script: |
           echo "--> Syncing Capacitor iOS platform..."
+          if command -v nvm &> /dev/null; then
+            nvm use 22 || true
+          fi
+          node -v
           cd mobile-parent
           npx cap sync ios
 
