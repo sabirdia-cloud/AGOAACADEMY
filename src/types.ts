@@ -101,6 +101,7 @@ export interface FormattedNotification {
 }
 
 export interface AcademySettings {
+  season: string;
   id?: number;
   name: string;
   logo_url: string;

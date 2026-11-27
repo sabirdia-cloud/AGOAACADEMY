@@ -13,6 +13,7 @@ import { supabase } from "@/services/supabaseClient";
 import { useAcademy } from "@/services/AcademyContext";
 import { PrintPortal } from "@/components/PrintPortal";
 import { CoachAttendanceReportTemplate } from "@/components/CoachAttendanceReportTemplate";
+import { coachAbsenceService, CoachAbsence } from "@/services/coachAbsences";
 
 // Match type multiplier constants
 const MATCH_MULTIPLIERS: Record<string, number> = {
@@ -79,6 +80,15 @@ export function CoachPayroll() {
         notes: '',
     });
     const [isSavingMatch, setIsSavingMatch] = useState(false);
+
+    // Coach Absence Modal
+    const [absenceModalCoach, setAbsenceModalCoach] = useState<any | null>(null);
+    const [payrollAbsenceForm, setPayrollAbsenceForm] = useState({
+        date: new Date().toISOString().split('T')[0],
+        reason: 'ظرف شخصي مبرر',
+        deducted_sessions: 1,
+        type: 'training' as 'training' | 'match' | 'other'
+    });
 
     // Print
     const [printCoach, setPrintCoach] = useState<any | null>(null);
@@ -216,7 +226,7 @@ export function CoachPayroll() {
         }).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
     };
 
-    // Combined stats: trainings + matches
+    // Combined stats: trainings + matches - absences
     const getStats = (coach: any) => {
         const coachId = Number(coach.coach_id);
         const trainingSessions = getCoachTrainingSessions(coach);
@@ -226,7 +236,15 @@ export function CoachPayroll() {
         const trainingCount = trainingSessions.length;
         const matchEquivalentSessions = matchSessions.reduce((sum, m) => sum + (m.multiplier || 1), 0);
         const totalSessions = trainingCount + matchEquivalentSessions;
-        const amount = totalSessions * rate;
+
+        // Coach absences for this period
+        const coachAbsences = coachAbsenceService.getAbsences(coachId).filter(a => isDateInPeriod(a.date));
+        const absencesCount = coachAbsences.reduce((sum, a) => sum + (Number(a.deducted_sessions) || 1), 0);
+
+        const netSessions = Math.max(0, totalSessions - absencesCount);
+        const amount = netSessions * rate;
+        const grossAmount = totalSessions * rate;
+        const deductedAmount = absencesCount * rate;
         const matchAmount = matchEquivalentSessions * rate;
         const trainingAmount = trainingCount * rate;
 
@@ -240,12 +258,17 @@ export function CoachPayroll() {
         return { 
             trainingSessions, 
             matchSessions,
+            coachAbsences,
+            absencesCount,
             trainingCount,
             matchCount: matchSessions.length,
             matchEquivalentSessions,
             totalSessions,
+            netSessions,
             rate, 
             amount,
+            grossAmount,
+            deductedAmount,
             trainingAmount,
             matchAmount,
             payment, 
@@ -258,7 +281,7 @@ export function CoachPayroll() {
         const stats = getStats(coach);
         const periodText = getPeriodDescription();
 
-        const finalAmount = stats.totalSessions > 0
+        const finalAmount = stats.netSessions > 0
             ? stats.amount
             : Number(window.prompt(`أدخل المبلغ يدوياً (دج):`, '1000') || 0);
 
@@ -267,12 +290,12 @@ export function CoachPayroll() {
             return;
         }
 
-        const breakdown = stats.trainingCount > 0 || stats.matchCount > 0
-            ? `\nتدريبات: ${stats.trainingCount} حصة (${stats.trainingAmount.toLocaleString()} دج)\nمباريات: ${stats.matchCount} مباراة = ${stats.matchEquivalentSessions} حصة (${stats.matchAmount.toLocaleString()} دج)`
+        const breakdown = stats.trainingCount > 0 || stats.matchCount > 0 || stats.absencesCount > 0
+            ? `\nتدريبات: ${stats.trainingCount} حصة (${stats.trainingAmount.toLocaleString()} دج)\nمباريات: ${stats.matchCount} مباراة = ${stats.matchEquivalentSessions} حصة (${stats.matchAmount.toLocaleString()} دج)\nغيابات المدرب: -${stats.absencesCount} حصة (-${stats.deductedAmount.toLocaleString()} دج)`
             : '';
 
         if (!window.confirm(
-            `تسديد مستحقات المدرب: ${coach.name}\n${periodText}${breakdown}\n\nإجمالي الحصص: ${stats.totalSessions}\nالمبلغ الإجمالي: ${finalAmount.toLocaleString()} دج\n\nهل أنت متأكد من تسجيل العملية؟`
+            `تسديد مستحقات المدرب: ${coach.name}\n${periodText}${breakdown}\n\nصافي الحصص المستحقة: ${stats.netSessions}\nالمبلغ الإجمالي الصافي: ${finalAmount.toLocaleString()} دج\n\nهل أنت متأكد من تسجيل العملية؟`
         )) return;
 
         setIsProcessing(coach.coach_id);
@@ -282,9 +305,9 @@ export function CoachPayroll() {
                 coach_id: coach.coach_id,
                 amount: finalAmount,
                 month: payMonth,
-                sessions_count: stats.totalSessions,
+                sessions_count: stats.netSessions,
                 payment_date: new Date().toISOString().split('T')[0],
-                notes: `أجر ${periodText} - ${stats.trainingCount} تدريب + ${stats.matchCount} مباراة (${stats.totalSessions} حصة إجمالاً)`,
+                notes: `أجر ${periodText} - ${stats.trainingCount} تدريب + ${stats.matchCount} مباراة (${stats.matchEquivalentSessions} حصة) - ${stats.absencesCount} غياب = ${stats.netSessions} حصة صافية`,
             }]);
             if (payErr) throw payErr;
 
@@ -293,7 +316,7 @@ export function CoachPayroll() {
                 category: 'أجور المدربين',
                 amount: finalAmount,
                 date: new Date().toISOString().split('T')[0],
-                notes: `أجر المدرب ${coach.name} - ${periodText} (${stats.trainingCount} تدريب + ${stats.matchCount} مباراة)`,
+                notes: `أجر المدرب ${coach.name} - ${periodText} (${stats.netSessions} حصة معتمدة)`,
             }]);
             if (finErr) console.warn("Finance insert warning:", finErr.message);
 
@@ -744,7 +767,7 @@ export function CoachPayroll() {
                                     {/* ─── Expanded Detail Panel ─── */}
                                     {isExpanded && (
                                         <div className="border-t border-zinc-800/70 bg-zinc-950/50">
-                                            <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4">
                                                 
                                                 {/* Training Sessions List */}
                                                 <div>
@@ -761,7 +784,7 @@ export function CoachPayroll() {
                                                                     <div className="flex items-center gap-2">
                                                                         <span className="text-[10px] font-black text-zinc-600 w-5">{i + 1}</span>
                                                                         <div>
-                                                                            <p className="text-xs font-bold text-zinc-200 truncate max-w-[180px]">{s.title || s.theme || 'حصة تدريب'}</p>
+                                                                            <p className="text-xs font-bold text-zinc-200 truncate max-w-[150px]">{s.title || s.theme || 'حصة تدريب'}</p>
                                                                             {s.team_name && <p className="text-[10px] text-zinc-500">{s.team_name}</p>}
                                                                         </div>
                                                                     </div>
@@ -790,7 +813,7 @@ export function CoachPayroll() {
                                                                     <div className="flex items-center gap-2">
                                                                         <Trophy className="h-3.5 w-3.5 text-violet-400 shrink-0" />
                                                                         <div>
-                                                                            <p className="text-xs font-bold text-zinc-200 truncate max-w-[160px]">{m.opponent || 'خصم'}</p>
+                                                                            <p className="text-xs font-bold text-zinc-200 truncate max-w-[140px]">{m.opponent || 'خصم'}</p>
                                                                             <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${m.match_type === 'cup' ? 'bg-amber-500/15 text-amber-400' : m.match_type === 'official' ? 'bg-indigo-500/15 text-indigo-400' : 'bg-zinc-800 text-zinc-400'}`}>
                                                                                 {MATCH_TYPE_LABELS[m.match_type] || m.match_type}
                                                                             </span>
@@ -799,6 +822,54 @@ export function CoachPayroll() {
                                                                     <div className="text-left shrink-0">
                                                                         <p className="text-[11px] font-bold text-zinc-300">{m.date}</p>
                                                                         <p className="text-[10px] text-violet-400 text-left font-black">×{m.multiplier} حصة</p>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                {/* Coach Absences List */}
+                                                <div>
+                                                    <div className="flex items-center justify-between mb-3 pb-2 border-b border-zinc-800/60">
+                                                        <h4 className="text-xs font-black text-rose-400 flex items-center gap-1.5">
+                                                            <AlertCircle className="h-3.5 w-3.5" />
+                                                            الغيابات المخصومة ({stats.absencesCount})
+                                                        </h4>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setAbsenceModalCoach(coach)}
+                                                            className="text-[10px] bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 px-2 py-0.5 rounded-lg font-bold"
+                                                        >
+                                                            + قيد غياب
+                                                        </button>
+                                                    </div>
+                                                    {stats.coachAbsences.length === 0 ? (
+                                                        <p className="text-xs text-zinc-600 text-center py-4">سجل انضباط ممتاز، لا توجد غيابات مسجلة</p>
+                                                    ) : (
+                                                        <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                                                            {stats.coachAbsences.map((ab: CoachAbsence) => (
+                                                                <div key={ab.id} className="flex items-center justify-between bg-rose-950/20 border border-rose-500/20 rounded-lg px-3 py-2">
+                                                                    <div>
+                                                                        <p className="text-xs font-bold text-zinc-200 truncate max-w-[140px]">{ab.reason || 'غياب شخصي'}</p>
+                                                                        <p className="text-[10px] text-zinc-500">{ab.date}</p>
+                                                                    </div>
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className="text-[10px] font-mono font-bold text-rose-400">
+                                                                            -{ab.deducted_sessions} ح
+                                                                        </span>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => {
+                                                                                if (window.confirm("إلغاء قيد هذا الغياب؟")) {
+                                                                                    coachAbsenceService.deleteAbsence(Number(coach.coach_id), ab.id);
+                                                                                    loadData(true);
+                                                                                }
+                                                                            }}
+                                                                            className="text-zinc-500 hover:text-rose-400 p-0.5"
+                                                                        >
+                                                                            <X size={12} />
+                                                                        </button>
                                                                     </div>
                                                                 </div>
                                                             ))}
@@ -823,11 +894,18 @@ export function CoachPayroll() {
                                                                 <span className="font-black text-violet-300">{stats.matchEquivalentSessions} حصة × {stats.rate.toLocaleString()} = {stats.matchAmount.toLocaleString()} دج</span>
                                                             </span>
                                                         )}
+                                                        {stats.absencesCount > 0 && (
+                                                            <span className="flex items-center gap-1.5 text-rose-400">
+                                                                <AlertCircle className="h-3.5 w-3.5" />
+                                                                <span>غيابات مخصومة:</span>
+                                                                <span className="font-black font-mono">-{stats.absencesCount} حصة (-{stats.deductedAmount.toLocaleString()} دج)</span>
+                                                            </span>
+                                                        )}
                                                     </div>
                                                     <div className="text-sm font-black">
-                                                        <span className="text-zinc-400">الإجمالي: </span>
+                                                        <span className="text-zinc-400">الصافي المعتمد: </span>
                                                         <span className="text-emerald-400">{stats.amount.toLocaleString()} دج</span>
-                                                        <span className="text-zinc-500 text-xs mr-1">({stats.totalSessions} حصة)</span>
+                                                        <span className="text-zinc-500 text-xs mr-1">({stats.netSessions} حصة صافية)</span>
                                                     </div>
                                                 </div>
                                             </div>
@@ -994,6 +1072,84 @@ export function CoachPayroll() {
                         <div className="flex justify-end gap-2 pt-2">
                             <Button variant="outline" onClick={() => setEditModal(null)} className="border-zinc-800 text-zinc-300 rounded-xl">إلغاء</Button>
                             <Button onClick={handleSaveEdit} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl">حفظ التغييرات</Button>
+                        </div>
+                    </div>
+                </Modal>
+            )}
+
+            {/* ─── Coach Absence Modal ───────────────────────────────── */}
+            {absenceModalCoach && (
+                <Modal 
+                    isOpen 
+                    onClose={() => setAbsenceModalCoach(null)} 
+                    title={`قيد غياب للمدرب: ${absenceModalCoach.name}`}
+                    size="sm"
+                >
+                    <div className="space-y-4 font-tajawal pt-1" dir="rtl">
+                        <div className="space-y-1.5">
+                            <label className="text-xs font-bold text-zinc-300">تاريخ الغياب *</label>
+                            <input 
+                                type="date" 
+                                value={payrollAbsenceForm.date} 
+                                onChange={e => setPayrollAbsenceForm(f => ({ ...f, date: e.target.value }))}
+                                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs text-white focus:outline-none focus:border-rose-500" 
+                            />
+                        </div>
+
+                        <div className="space-y-1.5">
+                            <label className="text-xs font-bold text-zinc-300">نوع الغياب</label>
+                            <select 
+                                value={payrollAbsenceForm.type} 
+                                onChange={(e: any) => setPayrollAbsenceForm(f => ({ ...f, type: e.target.value }))}
+                                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs text-white focus:outline-none focus:border-rose-500"
+                            >
+                                <option value="training">غياب عن تدريب</option>
+                                <option value="match">غياب عن مباراة</option>
+                                <option value="other">غياب آخر</option>
+                            </select>
+                        </div>
+
+                        <div className="space-y-1.5">
+                            <label className="text-xs font-bold text-zinc-300">السبب / الملاحظة</label>
+                            <input 
+                                type="text" 
+                                value={payrollAbsenceForm.reason} 
+                                onChange={e => setPayrollAbsenceForm(f => ({ ...f, reason: e.target.value }))}
+                                placeholder="مثال: ظرف عائلي مبرر / عذر صحي..."
+                                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs text-white focus:outline-none focus:border-rose-500" 
+                            />
+                        </div>
+
+                        <div className="space-y-1.5">
+                            <label className="text-xs font-bold text-zinc-300">عدد الحصص المخصومة</label>
+                            <input 
+                                type="number" 
+                                min="1" 
+                                max="5" 
+                                value={payrollAbsenceForm.deducted_sessions} 
+                                onChange={e => setPayrollAbsenceForm(f => ({ ...f, deducted_sessions: Number(e.target.value) || 1 }))}
+                                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs text-white focus:outline-none focus:border-rose-500" 
+                            />
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-2 border-t border-zinc-800">
+                            <Button variant="outline" onClick={() => setAbsenceModalCoach(null)} className="border-zinc-800 text-zinc-300 rounded-xl text-xs h-9">إلغاء</Button>
+                            <Button 
+                                onClick={() => {
+                                    coachAbsenceService.addAbsence(Number(absenceModalCoach.coach_id), {
+                                        date: payrollAbsenceForm.date,
+                                        reason: payrollAbsenceForm.reason,
+                                        type: payrollAbsenceForm.type,
+                                        deducted_sessions: Number(payrollAbsenceForm.deducted_sessions) || 1
+                                    });
+                                    setAbsenceModalCoach(null);
+                                    loadData(true);
+                                    alert("تم تسجيل قيد الغياب وخصمه من الحصص المستحقة بنجاح.");
+                                }} 
+                                className="bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs h-9 px-4"
+                            >
+                                تأكيد قيد الغياب
+                            </Button>
                         </div>
                     </div>
                 </Modal>
