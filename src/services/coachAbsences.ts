@@ -64,3 +64,4 @@ export const coachAbsenceService = {
     localStorage.setItem(`${STORAGE_KEY_PREFIX}${coachId}`, JSON.stringify(updated));
   }
 };
+
