@@ -85,8 +85,8 @@ workflows:
         recipients:
           - admin@agoa-academy.com
         notify:
-          on_success: true
-          on_failure: true
+          success: true
+          failure: true
 
   # ----------------------------------------------------------------------------
   # Workflow 2: Parent Mobile App (AGOA Parent iOS)
@@ -168,5 +168,5 @@ workflows:
         recipients:
           - admin@agoa-academy.com
         notify:
-          on_success: true
-          on_failure: true
+          success: true
+          failure: true
